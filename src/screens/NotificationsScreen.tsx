@@ -2,7 +2,7 @@
 // KBS Staff App — Notifications Screen
 // ============================================================
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -19,9 +19,13 @@ import {
   BorderRadius,
   Shadow,
 } from "../constants/theme";
-import { KBSButton, EmptyState } from "../components/shared";
+import { EmptyState } from "../components/shared";
 import { Notification, NotificationType } from "../types";
-import { MOCK_NOTIFICATIONS } from "../utils/mockData";
+import {
+  fetchNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from "../utils/api";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Ionicons } from "@expo/vector-icons";
@@ -41,35 +45,74 @@ interface NotificationsScreenProps {
   onSelectTask?: (taskId: string) => void;
 }
 
+const isRecord = (value: unknown): value is Record<string, any> =>
+  typeof value === "object" && value !== null;
+
+const extractNotificationItems = (payload: unknown): Notification[] => {
+  if (Array.isArray(payload)) return payload as Notification[];
+  if (!isRecord(payload)) return [];
+
+  if (Array.isArray(payload.items)) return payload.items as Notification[];
+  if (Array.isArray(payload.results)) return payload.results as Notification[];
+
+  if (isRecord(payload.data)) {
+    const nested = payload.data;
+    if (Array.isArray(nested.items)) return nested.items as Notification[];
+    if (Array.isArray(nested.results)) return nested.results as Notification[];
+  }
+
+  return [];
+};
+
 export default function NotificationsScreen({
   onSelectTask,
 }: NotificationsScreenProps) {
-  const [notifications, setNotifications] =
-    useState<Notification[]>(MOCK_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
+  const loadNotifications = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetchNotifications(1, 50);
+      setNotifications(extractNotificationItems(response.data));
+    } catch (error) {
+      console.log("Load notifications error:", error);
+      setNotifications([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadNotifications();
+  }, [loadNotifications]);
+
   // 📌 [API: PATCH /notifications/:id/read]
-  const markRead = useCallback((id: string) => {
+  const markRead = useCallback(async (id: string) => {
+    await markNotificationRead(id);
     setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)),
+      prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
     );
   }, []);
 
   // 📌 [API: PATCH /notifications/read-all]
-  const markAllRead = useCallback(() => {
+  const markAllRead = useCallback(async () => {
+    await markAllNotificationsRead();
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
   }, []);
 
   // 📌 [API: GET /notifications] — re-fetch on pull
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 800);
-  }, []);
+    await loadNotifications();
+    setRefreshing(false);
+  }, [loadNotifications]);
 
-  const handleNotifPress = (notif: Notification) => {
-    markRead(notif.id);
+  const handleNotifPress = async (notif: Notification) => {
+    await markRead(notif.id);
     if (notif.taskId && onSelectTask) {
       onSelectTask(notif.taskId);
     }
@@ -157,11 +200,13 @@ export default function NotificationsScreen({
           />
         }
         ListEmptyComponent={
-          <EmptyState
-            icon="🔔"
-            title="No announcement yet."
-            subtitle="You will receive notifications when there are new tasks or updates."
-          />
+          loading ? null : (
+            <EmptyState
+              icon="🔔"
+              title="No announcement yet."
+              subtitle="You will receive notifications when there are new tasks or updates."
+            />
+          )
         }
       />
     </SafeAreaView>

@@ -1,91 +1,67 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { defaultStackOptions } from './navigationOptions';
-import { TaskStackParamList } from '../types/navigation';
+// KBS Staff App — Task Stack Navigator (Refactored Architecture)
 
-import TaskListScreen from '../screens/TaskListScreen';
-import TaskDetailScreen from '../screens/TaskDetailScreen';
-import CheckInOutScreen from '../screens/CheckInOutScreen';
+import React from "react";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
-import { Colors } from '../constants/theme';
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+// import { defaultStackOptions } from "./navigationOptions";
+import { TaskStackParamList } from "../types/navigation";
+
+import TaskListScreen from "../screens/task/TaskListScreen";
+import TaskDetailScreen from "../screens/task/TaskDetailScreen";
+import CheckInOutScreen from "../screens/task/CheckInOutScreen";
+import {PhotoUploadScreen} from "../screens/task/PhotoUploadScreen";
+import AddNoteScreen from "../screens/task/AddNoteScreen";
 
 const Stack = createNativeStackNavigator<TaskStackParamList>();
 
-export default function TaskStackNavigator() {
-  const [taskCount, setTaskCount] = useState(0);
-  const [filter, setFilter] = useState<'all' | any>('all');
+// ================= NAVIGATOR =================
 
+export default function TaskStackNavigator() {
   return (
-    <Stack.Navigator screenOptions={defaultStackOptions}>
-      
+    <Stack.Navigator screenOptions={{}}>
       {/* ================= TASK LIST ================= */}
       <Stack.Screen
         name="TaskList"
+        component={TaskListScreen}
         options={{
-          title: 'Tasks',
-
-          headerRight: () => (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              
-              {/* Badge số lượng task */}
-              <View
-                style={{
-                  backgroundColor: Colors.primary700,
-                  paddingHorizontal: 10,
-                  paddingVertical: 4,
-                  borderRadius: 12,
-                  marginRight: 12,
-                }}
-              >
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
-                  {taskCount}
-                </Text>
-              </View>
-
-              {/* Filter icon */}
-              <TouchableOpacity
-                onPress={() => {
-                  // demo: cycle filter
-                  if (filter === 'all') setFilter('pending');
-                  else if (filter === 'pending') setFilter('completed');
-                  else setFilter('all');
-                }}
-                style={{ padding: 6 }}
-              >
-                <MaterialIcons
-                  name="filter-list"
-                  size={24}
-                  color={Colors.white}
-                />
-              </TouchableOpacity>
-            </View>
-          ),
+          headerShown: false,
         }}
-      >
-        {(props) => (
-          <TaskListScreen
-            {...props}
-            filter={filter}
-            onFilterChange={setFilter}
-            onCountChange={setTaskCount}
-          />
-        )}
-      </Stack.Screen>
+      />
 
-      {/* ================= DETAIL ================= */}
+      {/* ================= TASK DETAIL ================= */}
       <Stack.Screen
         name="TaskDetail"
         component={TaskDetailScreen}
-        options={{ headerShown: false }}
+        options={{
+          headerShown: false,
+        }}
       />
 
-      {/* ================= CHECK IN OUT ================= */}
+      {/* ================= CHECK IN / CHECK OUT ================= */}
       <Stack.Screen
         name="CheckInOut"
         component={CheckInOutScreen}
-        options={{ headerShown: true }}
+        options={{
+          title: "Check In / Check Out",
+        }}
+      />
+
+      {/* ================= PHOTO UPLOAD ================= */}
+      <Stack.Screen
+        name="PhotoUpload"
+        component={PhotoUploadScreen}
+        options={{
+          title: "Upload Photo",
+        }}
+      />
+
+      {/* ================= ADD NOTE ================= */}
+      <Stack.Screen
+        name="AddNote"
+        component={AddNoteScreen}
+        options={{
+          title: "Add Note",
+        }}
       />
     </Stack.Navigator>
   );

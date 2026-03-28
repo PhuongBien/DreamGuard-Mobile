@@ -1,8 +1,6 @@
-// ============================================================
 // KBS Staff App — Shared UI Components
-// ============================================================
 
-import React, { ReactNode } from 'react';
+import React, { ReactNode } from "react";
 import {
   View,
   Text,
@@ -12,21 +10,25 @@ import {
   ViewStyle,
   TextStyle,
   Image,
-} from 'react-native';
-import { Colors, Typography, Spacing, BorderRadius, Shadow } from '../constants/theme';
-import { TaskStatus, TaskPriority, TaskType } from '../types';
-import { TaskTypeConfig } from '../constants/theme';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+} from "react-native";
+import {
+  Colors,
+  Typography,
+  Spacing,
+  BorderRadius,
+  Shadow,
+} from "../constants/theme";
+import { TaskStatus, TaskPriority, TaskType } from "../types";
+import { TaskTypeConfig } from "../constants/theme";
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // KBSButton
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 interface KBSButtonProps {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
-  size?: 'sm' | 'md' | 'lg';
+  variant?: "primary" | "secondary" | "outline" | "ghost" | "danger";
+  size?: "sm" | "md" | "lg";
   loading?: boolean;
   disabled?: boolean;
   // icon?: string;
@@ -37,15 +39,23 @@ interface KBSButtonProps {
 export function KBSButton({
   title,
   onPress,
-  variant = 'primary',
-  size = 'md',
+  variant = "primary",
+  size = "md",
   loading,
   disabled,
   icon,
   style,
 }: KBSButtonProps) {
-  const buttonStyles: ViewStyle[] = [styles.btn, styles[`btn_${variant}`], styles[`btn_${size}`]];
-  const textStyles: TextStyle[] = [styles.btnText, styles[`btnText_${variant}`], styles[`btnText_${size}`]];
+  const buttonStyles: ViewStyle[] = [
+    styles.btn,
+    styles[`btn_${variant}`],
+    styles[`btn_${size}`],
+  ];
+  const textStyles: TextStyle[] = [
+    styles.btnText,
+    styles[`btnText_${variant}`],
+    styles[`btnText_${size}`],
+  ];
 
   if (disabled || loading) {
     buttonStyles.push(styles.btn_disabled);
@@ -61,10 +71,10 @@ export function KBSButton({
       {loading ? (
         <ActivityIndicator
           size="small"
-          color={variant === 'primary' ? Colors.white : Colors.primary700}
+          color={variant === "primary" ? Colors.white : Colors.primary700}
         />
       ) : (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           {/* {icon && <Text style={{ fontSize: size === 'sm' ? 14 : 16 }}>{icon}</Text>} */}
           {icon && <View style={{ marginRight: 6 }}>{icon}</View>}
           <Text style={textStyles}>{title}</Text>
@@ -74,38 +84,50 @@ export function KBSButton({
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // StatusBadge
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
-  pending:     'Pending',
-  in_progress: 'In Progress',
-  completed:   'Completed',
-  cancelled:   'Cancelled',
-  on_hold:     'On Hold',
+  pending: "Pending",
+  checked_in: "Checked In",
+  in_progress: "In Progress",
+  checked_out: "Checked Out",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  on_hold: "On Hold",
 };
 
 interface StatusBadgeProps {
   status: TaskStatus;
-  size?: 'sm' | 'base';
+  size?: "sm" | "base";
 }
 
-export function StatusBadge({ status, size = 'base' }: StatusBadgeProps) {
+export function StatusBadge({ status, size = "base" }: StatusBadgeProps) {
   const cfg = Colors.status[status] || Colors.status.pending;
   return (
-    <View style={[badgeStyles.wrap, { backgroundColor: cfg.bg, paddingVertical: size === 'sm' ? 2 : 4, paddingHorizontal: size === 'sm' ? 6 : 10 }]}>
+    <View
+      style={[
+        badgeStyles.wrap,
+        {
+          backgroundColor: cfg.bg,
+          paddingVertical: size === "sm" ? 2 : 4,
+          paddingHorizontal: size === "sm" ? 6 : 10,
+        },
+      ]}
+    >
       <View style={[badgeStyles.dot, { backgroundColor: cfg.dot }]} />
-      <Text style={[badgeStyles.text, { color: cfg.text, fontSize: size === 'sm' ? 10 : 12 }]}>
+      <Text
+        style={[
+          badgeStyles.text,
+          { color: cfg.text, fontSize: size === "sm" ? 10 : 12 },
+        ]}
+      >
         {STATUS_LABELS[status]}
       </Text>
     </View>
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PriorityBadge
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // const PRIORITY_LABELS: Record<TaskPriority, string> = {
 //   low:    'Thấp',
@@ -114,12 +136,16 @@ export function StatusBadge({ status, size = 'base' }: StatusBadgeProps) {
 //   urgent: 'Khẩn cấp',
 // };
 
-interface PriorityBadgeProps { priority: TaskPriority }
+interface PriorityBadgeProps {
+  priority: TaskPriority;
+}
 
 export function PriorityBadge({ priority }: PriorityBadgeProps) {
   const cfg = Colors.priority[priority];
   return (
-    <View style={[badgeStyles.wrap, { paddingVertical: 2, paddingHorizontal: 8 }]}>
+    <View
+      style={[badgeStyles.wrap, { paddingVertical: 2, paddingHorizontal: 8 }]}
+    >
       <Text style={[badgeStyles.text, { color: cfg.text, fontSize: 11 }]}>
         {/* {priority === 'urgent' ? '🚨 ' : priority === 'high' ? '🔴 ' : ''}{PRIORITY_LABELS[priority]} */}
       </Text>
@@ -127,16 +153,16 @@ export function PriorityBadge({ priority }: PriorityBadgeProps) {
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TaskTypeBadge
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-interface TaskTypeBadgeProps { type: TaskType }
+interface TaskTypeBadgeProps {
+  type: TaskType;
+}
 
 export function TaskTypeBadge({ type }: TaskTypeBadgeProps) {
   const cfg = TaskTypeConfig[type] || {
     label: type,
-    icon: 'cube-outline',
+    icon: "cube-outline",
     color: Colors.primary500,
   };
 
@@ -145,18 +171,18 @@ export function TaskTypeBadge({ type }: TaskTypeBadgeProps) {
       style={[
         badgeStyles.wrap,
         {
-          backgroundColor: cfg.color + '18',
+          backgroundColor: cfg.color + "18",
           paddingVertical: 4,
           paddingHorizontal: 10,
         },
       ]}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         <Ionicons name={cfg.icon as any} size={14} color={cfg.color} />
         <Text
           style={[
             badgeStyles.text,
-            { color: cfg.color, fontSize: 12, fontWeight: '600' },
+            { color: cfg.color, fontSize: 12, fontWeight: "600" },
           ]}
         >
           {cfg.label}
@@ -177,9 +203,7 @@ export function TaskTypeBadge({ type }: TaskTypeBadgeProps) {
 //   );
 // }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SectionCard
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 interface SectionCardProps {
   icon?: React.ReactNode;
@@ -189,7 +213,13 @@ interface SectionCardProps {
   headerRight?: React.ReactNode;
 }
 
-export function SectionCard({ icon, title, children, style, headerRight }: SectionCardProps) {
+export function SectionCard({
+  icon,
+  title,
+  children,
+  style,
+  headerRight,
+}: SectionCardProps) {
   return (
     <View style={[cardStyles.card, style]}>
       {title && (
@@ -201,58 +231,85 @@ export function SectionCard({ icon, title, children, style, headerRight }: Secti
         //   {headerRight}
         // </View>
         <View style={cardStyles.header}>
-  <View style={cardStyles.headerLeft}>
-    {icon}
-    <Text style={cardStyles.title}>{title}</Text>
-  </View>
+          <View style={cardStyles.headerLeft}>
+            {icon}
+            <Text style={cardStyles.title}>{title}</Text>
+          </View>
 
-  {headerRight && (
-    <View style={cardStyles.headerRight}>
-      {headerRight}
-    </View>
-  )}
-</View>
+          {headerRight && (
+            <View style={cardStyles.headerRight}>{headerRight}</View>
+          )}
+        </View>
       )}
       {children}
     </View>
   );
 }
 
+// InfoRow
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // InfoRow
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+type IconType = "ion" | "material";
+
 interface InfoRowProps {
-  // icon: ReactNode;
-    icon: keyof typeof MaterialIcons.glyphMap;
+  iconType: IconType;
+  iconName:
+    | keyof typeof Ionicons.glyphMap
+    | keyof typeof MaterialIcons.glyphMap;
   label: string;
-  value: string;
+  value: string | null;
   valueStyle?: TextStyle;
+  iconColor?: string;
+  iconSize?: number;
 }
 
-export function InfoRow({ icon, label, value, valueStyle }: InfoRowProps) {
+export function InfoRow({
+  iconType,
+  iconName,
+  label,
+  value,
+  valueStyle,
+  iconColor = Colors.gray500,
+  iconSize = 18,
+}: InfoRowProps) {
+  const renderIcon = () => {
+    if (iconType === "ion") {
+      return (
+        <Ionicons
+          name={iconName as keyof typeof Ionicons.glyphMap}
+          size={iconSize}
+          color={iconColor}
+        />
+      );
+    }
+
+    return (
+      <MaterialIcons
+        name={iconName as keyof typeof MaterialIcons.glyphMap}
+        size={iconSize}
+        color={iconColor}
+      />
+    );
+  };
+
   return (
     <View style={infoStyles.row}>
-      {/* <Text style={infoStyles.icon}>{icon}</Text> */}
-      {/* <View style={infoStyles.icon}>{icon}</View> */}
-      <View style={infoStyles.icon}>
-  <MaterialIcons
-    name={icon}
-    size={20}
-    color={Colors.primary700}
-  />
-</View>
+      <View style={infoStyles.icon}>{renderIcon()}</View>
+
       <View style={infoStyles.content}>
         <Text style={infoStyles.label}>{label}</Text>
-        <Text style={[infoStyles.value, valueStyle]}>{value}</Text>
+        <Text style={[infoStyles.value, valueStyle]}>
+          {value || "—"}
+        </Text>
       </View>
     </View>
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // EmptyState
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 interface EmptyStateProps {
   // icon?: string;
@@ -262,22 +319,27 @@ interface EmptyStateProps {
   action?: { label: string; onPress: () => void };
 }
 
-export function EmptyState({ icon = '📭', title, subtitle, action }: EmptyStateProps) {
+export function EmptyState({ icon, title, subtitle, action }: EmptyStateProps) {
   return (
     <View style={emptyStyles.wrap}>
-      <Text style={emptyStyles.icon}>{icon}</Text>
+      <View style={{ marginBottom: 16 }}>{icon}</View>
+
       <Text style={emptyStyles.title}>{title}</Text>
       {subtitle && <Text style={emptyStyles.subtitle}>{subtitle}</Text>}
+
       {action && (
-        <KBSButton title={action.label} onPress={action.onPress} variant="outline" style={{ marginTop: 16 }} />
+        <KBSButton
+          title={action.label}
+          onPress={action.onPress}
+          variant="outline"
+          style={{ marginTop: 16 }}
+        />
       )}
     </View>
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Avatar
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 interface AvatarProps {
   name: string;
@@ -287,13 +349,13 @@ interface AvatarProps {
 
 export function Avatar({ name, size = 40, imageUrl }: AvatarProps) {
   const initials = name
-    .split(' ')
+    .split(" ")
     .slice(-2)
-    .map(s => s[0])
-    .join('')
+    .map((s) => s[0])
+    .join("")
     .toUpperCase();
 
-  if (imageUrl) { 
+  if (imageUrl) {
     return (
       <Image
         source={{ uri: imageUrl }}
@@ -309,63 +371,71 @@ export function Avatar({ name, size = 40, imageUrl }: AvatarProps) {
         height: size,
         borderRadius: size / 2,
         backgroundColor: Colors.primary700,
-        alignItems: 'center',
-        justifyContent: 'center',
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
-      <Text style={{ color: Colors.white, fontSize: size * 0.38, fontWeight: '700' }}>
+      <Text
+        style={{
+          color: Colors.white,
+          fontSize: size * 0.38,
+          fontWeight: "700",
+        }}
+      >
         {initials}
       </Text>
     </View>
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Divider
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function Divider({ style }: { style?: ViewStyle }) {
-  return <View style={[{ height: 1, backgroundColor: Colors.gray100 }, style]} />;
+  return (
+    <View style={[{ height: 1, backgroundColor: Colors.gray100 }, style]} />
+  );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // STYLES
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const styles = StyleSheet.create({
   btn: {
     borderRadius: BorderRadius.base,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
   },
-  btn_primary:   { backgroundColor: Colors.primary700 },
+  btn_primary: { backgroundColor: Colors.primary700 },
   btn_secondary: { backgroundColor: Colors.primary100 },
-  btn_outline:   { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: Colors.primary700 },
-  btn_ghost:     { backgroundColor: 'transparent' },
-  btn_danger:    { backgroundColor: Colors.error },
-  btn_disabled:  { opacity: 0.5 },
-  btn_sm:  { paddingVertical: 8,  paddingHorizontal: 16 },
-  btn_md:  { paddingVertical: 12, paddingHorizontal: 20 },
-  btn_lg:  { paddingVertical: 16, paddingHorizontal: 24 },
-  btnText: { fontWeight: '600' },
-  btnText_primary:   { color: Colors.white },
+  btn_outline: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: Colors.primary700,
+  },
+  btn_ghost: { backgroundColor: "transparent" },
+  btn_danger: { backgroundColor: Colors.error },
+  btn_disabled: { opacity: 0.5 },
+  btn_sm: { paddingVertical: 8, paddingHorizontal: 16 },
+  btn_md: { paddingVertical: 12, paddingHorizontal: 20 },
+  btn_lg: { paddingVertical: 16, paddingHorizontal: 24 },
+  btnText: { fontWeight: "600" },
+  btnText_primary: { color: Colors.white },
   btnText_secondary: { color: Colors.primary700 },
-  btnText_outline:   { color: Colors.primary700 },
-  btnText_ghost:     { color: Colors.primary700 },
-  btnText_danger:    { color: Colors.white },
-  btnText_sm:  { fontSize: Typography.sm },
-  btnText_md:  { fontSize: Typography.base },
-  btnText_lg:  { fontSize: Typography.md },
+  btnText_outline: { color: Colors.primary700 },
+  btnText_ghost: { color: Colors.primary700 },
+  btnText_danger: { color: Colors.white },
+  btnText_sm: { fontSize: Typography.sm },
+  btnText_md: { fontSize: Typography.base },
+  btnText_lg: { fontSize: Typography.md },
 });
 
 const badgeStyles = StyleSheet.create({
   wrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     borderRadius: BorderRadius.full,
     gap: 5,
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
   },
   dot: {
     width: 6,
@@ -373,7 +443,7 @@ const badgeStyles = StyleSheet.create({
     borderRadius: 3,
   },
   text: {
-    fontWeight: '600',
+    fontWeight: "600",
   },
 });
 
@@ -386,9 +456,9 @@ const cardStyles = StyleSheet.create({
     ...Shadow.base,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     gap: 6,
     marginBottom: Spacing.md,
     paddingBottom: Spacing.md,
@@ -396,71 +466,70 @@ const cardStyles = StyleSheet.create({
     borderBottomColor: Colors.gray100,
   },
   headerLeft: {
-  flexDirection: 'row',
-  alignItems: 'center',
-},
+    flexDirection: "row",
+    alignItems: "center",
+  },
 
-headerRight: {
-  marginLeft: 'auto',
-},
+  headerRight: {
+    marginLeft: "auto",
+  },
   title: {
     marginLeft: 6,
     fontSize: Typography.md,
-    fontWeight: '700',
+    fontWeight: "700",
     color: Colors.primary900,
   },
 });
 
 const infoStyles = StyleSheet.create({
   row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    alignItems: "flex-start",
     paddingVertical: Spacing.sm,
     gap: 10,
   },
   icon: {
-  width: 24,
-  alignItems: 'center',
-  justifyContent: 'center',
-  marginTop: 2,
-  
-},
+    width: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
   content: { flex: 1 },
   label: {
     fontSize: Typography.xs,
     color: Colors.gray400,
-    fontWeight: '500',
-    textTransform: 'uppercase',
+    fontWeight: "500",
+    textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 2,
   },
   value: {
     fontSize: Typography.base,
     color: Colors.gray800,
-    fontWeight: '500',
+    fontWeight: "500",
   },
 });
 
 const emptyStyles = StyleSheet.create({
   wrap: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing['2xl'],
-    paddingVertical: Spacing['4xl'],
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: Spacing["2xl"],
+    paddingVertical: Spacing["4xl"],
   },
   icon: { fontSize: 56, marginBottom: 16 },
   title: {
     fontSize: Typography.lg,
-    fontWeight: '700',
+    fontWeight: "700",
     color: Colors.gray700,
-    textAlign: 'center',
+    textAlign: "center",
     marginBottom: 8,
   },
   subtitle: {
     fontSize: Typography.base,
     color: Colors.gray400,
-    textAlign: 'center',
+    textAlign: "center",
     lineHeight: 22,
   },
 });

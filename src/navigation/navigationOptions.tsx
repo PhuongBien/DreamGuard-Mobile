@@ -1,29 +1,52 @@
-import React from 'react';
-import { View } from 'react-native';
-import { NativeStackNavigationOptions } from '@react-navigation/native-stack';
-import { Colors, Typography } from '../constants/theme';
+// // KBS Staff App — Navigation Options
 
-export const defaultStackOptions: NativeStackNavigationOptions = {
-  headerTitleAlign: 'center',
-  headerTintColor: Colors.white,
-  headerShadowVisible: false,
+// import React from "react";
+// import { View, StyleSheet, Platform } from "react-native";
+// import { NativeStackNavigationOptions } from "@react-navigation/native-stack";
+// import { Colors, Typography } from "../constants/theme";
 
-  headerTitleStyle: {
-    fontSize: Typography.lg,
-    fontWeight: '700',
-  },
+// // Default Stack Options
 
-  headerBackTitleVisible: false,
+// export const defaultStackOptions: NativeStackNavigationOptions = {
+//   headerTitleAlign: "center",
+//   headerTintColor: Colors.white,
+//   headerBackTitleVisible: false,
+//   headerShadowVisible: false,
 
-  headerBackground: () => (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: Colors.primary900,
-        borderBottomLeftRadius: 16,
-        borderBottomRightRadius: 16,
-        elevation: 8, // Android shadow only
-      }}
-    />
-  ),
-};
+//   headerTitleStyle: {
+//     fontSize: Typography.lg,
+//     fontWeight: "700",
+//   },
+
+//   headerBackground: () => <HeaderBackground />,
+// };
+
+// // Header Background Component
+
+// function HeaderBackground() {
+//   return <View style={styles.headerBackground} />;
+// }
+
+// // Styles
+
+// const styles = StyleSheet.create({
+//   headerBackground: {
+//     flex: 1,
+//     backgroundColor: Colors.primary500,
+//     // borderBottomLeftRadius: 16,
+//     // borderBottomRightRadius: 16,
+
+//     // Android shadow
+//     elevation: 8,
+
+//     // iOS shadow
+//     ...Platform.select({
+//       ios: {
+//         shadowColor: "#000",
+//         shadowOffset: { width: 0, height: 4 },
+//         shadowOpacity: 0.25,
+//         shadowRadius: 6,
+//       },
+//     }),
+//   },
+// });

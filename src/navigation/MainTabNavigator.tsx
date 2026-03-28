@@ -1,59 +1,39 @@
-import React from 'react';
-import { View } from 'react-native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { RootTabParamList } from '../types/navigation';
-import TaskStackNavigator from './TaskStackNavigator';
-import NotificationsScreen from '../screens/NotificationsScreen';
-import ProfileScreen from '../screens/ProfileScreen';
+// ============================================================
+// KBS Staff App — Main Tab Navigator
+// ============================================================
 
-import { Colors, Typography } from '../constants/theme';
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import Ionicons from '@expo/vector-icons/Ionicons';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import React from "react";
+import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 
-const Tab = createBottomTabNavigator<RootTabParamList>();
+import { MainTabParamList } from "../types/navigation";
+import TaskStackNavigator from "./TaskStackNavigator";
+import NotificationsScreen from "../screens/NotificationsScreen";
+import ProfileScreen from "../screens/ProfileScreen";
+
+import { Colors } from "../constants/theme";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+
+const Tab = createBottomTabNavigator<MainTabParamList>();
 
 export default function MainTabNavigator() {
   return (
     <Tab.Navigator
       screenOptions={{
-        // ================= TAB BAR =================
+        headerShown: false, // 🔥 Quan trọng: để Stack xử lý header
+
         tabBarActiveTintColor: Colors.primary700,
         tabBarInactiveTintColor: Colors.primary300,
+
         tabBarStyle: {
           height: 60,
           paddingBottom: 6,
         },
+
         tabBarLabelStyle: {
           fontSize: 11,
-          fontWeight: '600',
+          fontWeight: "600",
         },
-
-        // ================= HEADER =================
-        headerTitleAlign: 'center',
-        headerTintColor: Colors.white,
-        headerShadowVisible: false,
-
-        headerTitleStyle: {
-          fontSize: Typography.lg,
-          fontWeight: '700',
-        },
-
-        headerBackground: () => (
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: Colors.primary900,
-              // borderBottomLeftRadius: 20,
-              // borderBottomRightRadius: 20,
-              elevation: 6, // Android shadow
-              shadowColor: '#000', // iOS shadow
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.2,
-              shadowRadius: 6,
-            }}
-          />
-        ),
       }}
     >
       {/* ================= TASKS ================= */}
@@ -61,22 +41,13 @@ export default function MainTabNavigator() {
         name="Tasks"
         component={TaskStackNavigator}
         options={{
-          headerShown: false,
-          tabBarLabel: 'Tasks',
-          tabBarIcon: ({ focused }) =>
-            focused ? (
-              <MaterialCommunityIcons
-                name="list-box"
-                size={24}
-                color={Colors.primary800}
-              />
-            ) : (
-              <MaterialIcons
-                name="list-alt"
-                size={24}
-                color={Colors.primary300}
-              />
-            ),
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons
+              name="list-box"
+              size={size}
+              color={color}
+            />
+          ),
         }}
       />
 
@@ -85,23 +56,13 @@ export default function MainTabNavigator() {
         name="Notifications"
         component={NotificationsScreen}
         options={{
-          headerShown: false,
-          title: 'Notifications',
-          tabBarLabel: 'Notifications',
-          tabBarIcon: ({ focused }) =>
-            focused ? (
-              <Ionicons
-                name="notifications"
-                size={24}
-                color={Colors.primary800}
-              />
-            ) : (
-              <Ionicons
-                name="notifications-outline"
-                size={24}
-                color={Colors.primary300}
-              />
-            ),
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons
+              name="notifications-outline"
+              size={size}
+              color={color}
+            />
+          ),
         }}
       />
 
@@ -110,32 +71,13 @@ export default function MainTabNavigator() {
         name="Profile"
         component={ProfileScreen}
         options={{
-          title: 'My Profile',
-          tabBarLabel: 'Profile',
-
-          headerRight: () => (
+          tabBarIcon: ({ color, size }) => (
             <Ionicons
-              name="settings-outline"
-              size={22}
-              color={Colors.white}
-              style={{ marginRight: 16 }}
+              name="person-circle-outline"
+              size={size}
+              color={color}
             />
           ),
-
-          tabBarIcon: ({ focused }) =>
-            focused ? (
-              <Ionicons
-                name="person-circle"
-                size={24}
-                color={Colors.primary800}
-              />
-            ) : (
-              <Ionicons
-                name="person-circle-outline"
-                size={24}
-                color={Colors.primary300}
-              />
-            ),
         }}
       />
     </Tab.Navigator>

@@ -1,8 +1,6 @@
-// ============================================================
 // KBS Staff App — Login Screen
-// ============================================================
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -12,9 +10,9 @@ import {
   Platform,
   TouchableOpacity,
   ScrollView,
-  Alert,
   StatusBar,
   Image,
+  Pressable,
 } from "react-native";
 import {
   Colors,
@@ -22,71 +20,95 @@ import {
   Spacing,
   BorderRadius,
   Shadow,
-} from "../constants/theme";
-import { KBSButton } from "../components/shared";
-import { useAuth } from "../context/AuthContext";
+} from "../../constants/theme";
+import { KBSButton } from "../../components/shared";
+import { useAuth } from "../../context/AuthContext";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AntDesign from "@expo/vector-icons/AntDesign";
-import { LinearGradient } from "expo-linear-gradient";
-import Feather from "@expo/vector-icons/Feather";
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { AuthStackParamList } from "../../types/navigation";
+import { Ionicons } from "@expo/vector-icons";
 
-// import { useAuth } from '../hooks/useAuth';
+type Props = NativeStackScreenProps<
+  AuthStackParamList,
+  "Login"
+>;
 
-// Demo accounts shown on login screen for easy testing
-const DEMO_ACCOUNTS = [
-  {
-    name: "Nguyễn Văn An",
-    role: "Nhân viên giao hàng",
-    email: "an.nguyen@kbs.vn",
-    password: "demo123",
-  },
-  {
-    name: "Trần Thị Bích",
-    role: "Nhân viên vệ sinh",
-    email: "bich.tran@kbs.vn",
-    password: "demo123",
-  },
-  {
-    name: "Lê Hoàng Minh",
-    role: "Quản lý",
-    email: "minh.le@kbs.vn",
-    password: "demo123",
-  },
-  {
-    name: "Phạm Thị Lan",
-    role: "Nhân viên kho",
-    email: "lan.pham@kbs.vn",
-    password: "demo123",
-  },
-];
+const getLoginErrorMessage = (error: unknown): string => {
+  const fallback =
+    "Incorrect password or phone number, please log in again.";
 
-export default function LoginScreen() {
-  const { login, isLoading } = useAuth();
-  const [email, setEmail] = useState("");
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+      ? error
+      : "";
+
+  const normalized = rawMessage.trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+
+  const hasPasswordHint = /password|mat\s*khau|mật\s*khẩu/.test(normalized);
+  const hasPhoneHint =
+    /phone|phone\s*number|so\s*dien\s*thoai|số\s*điện\s*thoại/.test(normalized) ||
+    normalized.includes("user not found") ||
+    normalized.includes("account not found") ||
+    normalized.includes("phone not found");
+
+  if (hasPasswordHint && !hasPhoneHint) {
+    return "Incorrect password";
+  }
+
+  if (hasPhoneHint && !hasPasswordHint) {
+    return "Incorrect phone number";
+  }
+
+  return fallback;
+};
+
+export default function LoginScreen({ navigation }: Props) {
+  const { login, isLoading, error } = useAuth();
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
+  useEffect(() => {
+    if (error) {
+      setErrorMsg(getLoginErrorMessage(error));
+    }
+  }, [error]);
+
   const handleLogin = async () => {
     setErrorMsg("");
 
-    if (!email.trim()) {
-      setErrorMsg("Please enter your email address.");
+    if (!phoneNumber.trim()) {
+      setErrorMsg("Please enter your phone number.");
       return;
     }
+
+    const cleanedPhone = phoneNumber.replace(/\D/g, "");
+    if (cleanedPhone.length < 9) {
+      setErrorMsg("Please enter a valid phone number.");
+      return;
+    }
+
     if (!password) {
       setErrorMsg("Please enter your password.");
       return;
     }
 
-    await login(email, password);
+    try {
+      await login(cleanedPhone, password);
+    } catch (err: unknown) {
+      setErrorMsg(getLoginErrorMessage(err));
+    }
   };
 
-  const fillDemo = (acc: (typeof DEMO_ACCOUNTS)[0]) => {
-    setEmail(acc.email);
-    setPassword(acc.password);
-    setErrorMsg("");
-  };
+  const [checked, setChecked] = useState(false);
+
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -105,7 +127,7 @@ export default function LoginScreen() {
             <View style={styles.logoWrap}>
               {/* <Text style={styles.logoEmoji}>🛏️</Text> */}
               <Image
-                source={require("../../assets/logo2.png")}
+                source={require("../../../assets/logo2.png")}
                 style={styles.logoImage}
                 resizeMode="contain"
               />
@@ -122,26 +144,26 @@ export default function LoginScreen() {
             <View style={styles.cardContent}>
               {/* <Text style={styles.cardTitle}>Log in</Text> */}
 
-              {/* Email */}
+              {/* Phone */}
               <View style={styles.fieldWrap}>
-                <Text style={styles.label}>Company email</Text>
+                <Text style={styles.label}>Phone Number</Text>
                 <View
                   style={[
                     styles.inputWrap,
-                    errorMsg && email === "" && styles.inputError,
+                    errorMsg && phoneNumber === "" && styles.inputError,
                   ]}
                 >
                   <TextInput
                     style={styles.input}
                     underlineColorAndroid="transparent"
-                    placeholder="your.name@kbs.vn"
+                    placeholder="e.g. 0387412289"
                     placeholderTextColor={Colors.gray400}
-                    value={email}
+                    value={phoneNumber}
                     onChangeText={(v) => {
-                      setEmail(v);
+                      setPhoneNumber(v);
                       setErrorMsg("");
                     }}
-                    keyboardType="email-address"
+                    keyboardType="phone-pad"
                     autoCapitalize="none"
                     autoCorrect={false}
                   />
@@ -186,13 +208,23 @@ export default function LoginScreen() {
 
               {/* Remember + Forgot */}
               <View style={styles.row}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <View style={styles.checkbox} />
-                  <Text style={styles.remember}>Remember me</Text>
-                </View>
+                <Pressable
+        style={styles.checkboxWrap}
+        onPress={() => setChecked(!checked)}
+      >
+        <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+          {checked && (
+            <Ionicons name="checkmark" size={16} color="#fff" />
+          )}
+        </View>
 
-                <TouchableOpacity>
-                  <Text style={styles.forgot}>Forgot password?</Text>
+        <Text style={styles.remember}>Remember me</Text>
+      </Pressable>
+
+                <TouchableOpacity
+                  onPress={() => navigation.navigate("ForgotPassword")}
+                >
+                  <Text style={{ color: "#2E5B9A" }}>Forgot password?</Text>
                 </TouchableOpacity>
               </View>
 
@@ -208,10 +240,9 @@ export default function LoginScreen() {
 
             <View>
               <Text style={styles.subtitle}>
-              Staff Management System for Children's Bedding
-            </Text>
+                Staff Management System for Children's Bedding
+              </Text>
             </View>
-
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -296,56 +327,83 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   inputWrap: {
-  flexDirection: "row",
-  alignItems: "center",
-  borderWidth: 1.5,
-  borderRadius: BorderRadius.base,
-  paddingHorizontal: 12,
-  height: 52,
-  backgroundColor: Colors.gray100,
-  borderColor: Colors.gray300,
-},
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderRadius: BorderRadius.base,
+    paddingHorizontal: 12,
+    height: 52,
+    backgroundColor: Colors.gray100,
+    borderColor: Colors.gray300,
+  },
 
-inputWrapFocus: {
-  borderColor: Colors.primary500, 
-},
+  inputWrapFocus: {
+    borderColor: Colors.primary500,
+  },
   inputError: { borderColor: Colors.error },
   inputIcon: { fontSize: 18, marginRight: 8 },
-  input: { 
-    flex: 1, 
-    fontSize: Typography.base, 
-    color: Colors.gray800, 
-    borderWidth: 0, 
-    paddingVertical: 0, 
+  input: {
+    flex: 1,
+    fontSize: Typography.base,
+    color: Colors.gray800,
+    borderWidth: 0,
+    paddingVertical: 0,
     borderColor: "transparent",
   },
   eyeBtn: { padding: 4 },
 
-   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginVertical: 10,
   },
 
+  checkboxWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
   checkbox: {
-    width: 16,
-    height: 16,
+    width: 20,
+    height: 20,
     borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderWidth: 1.5,
+    borderColor: "#999",
+    alignItems: "center",
+    justifyContent: "center",
     marginRight: 8,
+    backgroundColor: "transparent",
+  },
+
+  checkboxChecked: {
+    backgroundColor: "#4F46E5", // màu primary
+    borderColor: "#4F46E5",
   },
 
   remember: {
-    fontSize: 13,
-    color: '#475569',
+    fontSize: 14,
+    color: "#555",
   },
+
+  // checkbox: {
+  //   width: 16,
+  //   height: 16,
+  //   borderRadius: 4,
+  //   borderWidth: 1,
+  //   borderColor: "#CBD5E1",
+  //   marginRight: 8,
+  // },
+
+  // remember: {
+  //   fontSize: 13,
+  //   color: "#475569",
+  // },
 
   forgot: {
     fontSize: 13,
-    color: '#2563EB',
-    fontWeight: '500',
+    color: "#2563EB",
+    fontWeight: "500",
   },
 
   // Error

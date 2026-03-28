@@ -1,6 +1,4 @@
-// ============================================================
 // KBS Staff App — Profile Screen (Professional Version)
-// ============================================================
 
 import React from "react";
 import {
@@ -34,18 +32,26 @@ import {
 } from "../components/shared";
 
 import { useAuth } from "../context/AuthContext";
-import { MOCK_TASKS } from "../utils/mockData";
+import { useTask } from "../context/TaskContext";
 import * as ImagePicker from "expo-image-picker";
 
 export default function ProfileScreen() {
   const { user, logout, setUser } = useAuth();
-  if (!user) return null;
-
+  const { tasks } = useTask();
+  if (!user) {
+    return (
+      <SafeAreaView
+        style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+      >
+        <Text>User not found</Text>
+      </SafeAreaView>
+    );
+  }
   const roleInfo = RoleConfig[user.role] || {
     label: user.role,
   };
 
-  const myTasks = MOCK_TASKS.filter((t) => t.assignedTo === user.id);
+  const myTasks = tasks.filter((t) => t.assignedTo === user.id);
   const completed = myTasks.filter((t) => t.status === "completed").length;
   const pending = myTasks.filter((t) => t.status === "pending").length;
   const inProgress = myTasks.filter((t) => t.status === "in_progress").length;
@@ -143,37 +149,27 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <SectionCard title="Personal Information">
             <InfoRow
-              icon={
-                <Ionicons
-                  name="mail-outline"
-                  size={18}
-                  color={Colors.primary700}
-                />
-              }
+              iconType="ion"
+              iconName="mail-outline"
+              iconColor={Colors.primary700}
               label="Email"
               value={user.email}
             />
+
             <InfoRow
-              icon={
-                <Ionicons
-                  name="call-outline"
-                  size={18}
-                  color={Colors.primary700}
-                />
-              }
+              iconType="ion"
+              iconName="call-outline"
+              iconColor={Colors.primary700}
               label="Phone"
               value={user.phone}
             />
+
             <InfoRow
-              icon={
-                <Ionicons
-                  name="business-outline"
-                  size={18}
-                  color={Colors.primary700}
-                />
-              }
+              iconType="ion"
+              iconName="business-outline"
+              iconColor={Colors.primary700}
               label="Department"
-              value={user.department}
+              value={user.department ?? null}
             />
           </SectionCard>
 

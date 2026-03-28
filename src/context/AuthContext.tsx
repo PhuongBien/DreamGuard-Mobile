@@ -12,10 +12,9 @@ import React, {
 } from "react";
 import { AuthState, User } from "../types";
 import { setAuthToken } from "../utils/api";
-import { MOCK_USERS, DEMO_CREDENTIALS } from "../utils/mockData";
-
+import { loginService } from "../services/auth.service";
 interface AuthContextType extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
+  login: (phoneNumber: string, password: string) => Promise<void>;
   logout: () => void;
   error: string | null;
   setUser: React.Dispatch<React.SetStateAction<User | null>>;
@@ -29,48 +28,66 @@ let _token: string | null = null;
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Restore session on mount
+  // useEffect(() => {
+  //   const restored = _token;
+  //   if (restored) {
+  //     setAuthToken(restored);
+  //     setToken(restored);
+  //     // In production: call authGetMe() to re-hydrate user
+  //   }
+  //   setIsLoading(false);
+  // }, []);
+
+  const [isInitializing, setIsInitializing] = useState(true);
+
   useEffect(() => {
     const restored = _token;
     if (restored) {
       setAuthToken(restored);
       setToken(restored);
-      // In production: call authGetMe() to re-hydrate user
     }
-    setIsLoading(false);
+    setIsInitializing(false);
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (phoneNumber: string, password: string) => {
     setIsLoading(true);
     setError(null);
+
     try {
-      // ─── DEMO MODE ──────────────────────────────────────────
-      // In production, replace this block with the real API call:
-      //   const res = await authLogin({ email, password });
-      //   const { token, user } = res.data;
-      // ─────────────────────────────────────────────────────────
+      // const response = await loginService(phoneNumber, password);
 
-      await new Promise((r) => setTimeout(r, 900)); // simulate network
+      // _token = response.token;
+      // setAuthToken(response.token);
+      // setToken(response.token);
+      // setUser(response.user);
+      const response = await loginService(phoneNumber, password);
 
-      const cred = DEMO_CREDENTIALS[email.toLowerCase().trim()];
-      if (!cred || cred.password !== password) {
-        throw new Error("Email hoặc mật khẩu không đúng.");
+      if (!response?.token || !response?.user) {
+        throw new Error("Invalid login response");
       }
 
-      const foundUser = MOCK_USERS.find((u) => u.id === cred.userId);
-      if (!foundUser) throw new Error("Không tìm thấy tài khoản.");
+      _token = response.token;
+      setAuthToken(response.token);
+      setToken(response.token);
+      setUser(response.user);
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Login failed. Please try again.";
 
-      const fakeToken = `kbs_demo_token_${Date.now()}`;
-      _token = fakeToken;
-      setAuthToken(fakeToken);
-      setToken(fakeToken);
-      setUser({ ...foundUser, avatarUrl: foundUser.avatarUrl });
-    } catch (e: any) {
-      setError(e.message || "Đăng nhập thất bại. Vui lòng thử lại.");
-      throw e;
+      setError(message);
+
+      _token = null;
+      setToken(null);
+      setUser(null);
+
+      throw error;
     } finally {
       setIsLoading(false);
     }
@@ -90,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         token,
         isLoading,
+        // isAuthenticated: !!token,
         isAuthenticated: !!user,
         error,
         login,
