@@ -12,10 +12,10 @@ import React, {
 } from "react";
 import { AuthState, User } from "../types";
 import { setAuthToken } from "../utils/api";
-import { loginService } from "../services/auth.service";
+import { loginService, logoutService } from "../services/auth.service";
 interface AuthContextType extends AuthState {
   login: (phoneNumber: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   error: string | null;
   setUser: React.Dispatch<React.SetStateAction<User | null>>;
 }
@@ -93,7 +93,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      await logoutService();
+    } catch {
+      // Always clear local session to ensure user can exit stale auth state.
+    }
+
     _token = null;
     setAuthToken(null);
     setToken(null);

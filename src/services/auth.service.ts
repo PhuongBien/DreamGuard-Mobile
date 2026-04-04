@@ -1,11 +1,13 @@
 import { User } from "../types";
 import {
   authLogin,
-  authForgotPassword,
-  authResetPassword,
+  // authForgotPassword,
+  // authResetPassword,
+  authLogout,
+  fetchStaffs,
   AuthLoginPayload,
-  AuthForgotPayload,
-  AuthResetPayload,
+  // AuthForgotPayload,
+  // AuthResetPayload,
 } from "../utils/api";
 
 const isGuid = (value?: string) =>
@@ -84,6 +86,122 @@ const getPreferredName = (
   ) as string | undefined;
 
   return resolved?.trim() || fallbackPhone;
+};
+
+const toOptionalString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
+
+const toNullableString = (value: unknown): string | null | undefined => {
+  if (value == null) return undefined;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || null;
+};
+
+const toNormalizedUserFromStaff = (
+  input: Record<string, any>,
+  fallback: User,
+): User => {
+  const resolvedId =
+    toOptionalString(input.staffId) ||
+    toOptionalString(input.id) ||
+    toOptionalString(input.userId) ||
+    fallback.id;
+
+  const resolvedPhone =
+    toOptionalString(input.phoneNumber) ||
+    toOptionalString(input.phone) ||
+    fallback.phone;
+
+  const resolvedName =
+    toOptionalString(input.fullName) ||
+    toOptionalString(input.name) ||
+    fallback.name ||
+    resolvedPhone;
+
+  return {
+    ...fallback,
+    id: resolvedId,
+    userId: resolvedId,
+    name: resolvedName,
+    fullName: toOptionalString(input.fullName) || resolvedName,
+    email: toOptionalString(input.email) || fallback.email,
+    phone: resolvedPhone,
+    phoneNumber: resolvedPhone,
+    role: normalizeRole(
+      toOptionalString(input.role) ||
+        toOptionalString(input.roleName) ||
+        toOptionalString(input.position) ||
+        fallback.backendRole,
+    ),
+    backendRole:
+      toOptionalString(input.role) ||
+      toOptionalString(input.roleName) ||
+      fallback.backendRole,
+    gender: toOptionalString(input.gender) || fallback.gender,
+    dateOfBirth: toOptionalString(input.dateOfBirth) || fallback.dateOfBirth,
+    address: toOptionalString(input.address) || fallback.address,
+    position: toOptionalString(input.position) || fallback.position,
+    department: toOptionalString(input.department) || fallback.department,
+    employeeCode:
+      toOptionalString(input.employeeCode) || fallback.employeeCode,
+    avatarUrl: toNullableString(input.avatarUrl) ?? fallback.avatarUrl,
+  };
+};
+
+const pickStaffCandidates = (payload: any): Record<string, any>[] => {
+  if (Array.isArray(payload)) {
+    return payload.filter(
+      (item) => typeof item === "object" && item !== null,
+    ) as Record<string, any>[];
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  const knownArrayKeys = ["items", "data", "results", "staffs", "staff"];
+  for (const key of knownArrayKeys) {
+    const value = payload[key];
+    if (Array.isArray(value)) {
+      return value.filter(
+        (item) => typeof item === "object" && item !== null,
+      ) as Record<string, any>[];
+    }
+  }
+
+  return [payload as Record<string, any>];
+};
+
+const findMatchingStaff = (staffs: Record<string, any>[], currentUser: User) => {
+  const currentId = currentUser.id?.toLowerCase?.() || "";
+  const currentUserId = currentUser.userId?.toLowerCase?.() || "";
+  const currentPhone = (currentUser.phone || currentUser.phoneNumber || "").toLowerCase();
+  const currentEmployeeCode = (currentUser.employeeCode || "").toLowerCase();
+
+  return staffs.find((staff) => {
+    const staffId =
+      (toOptionalString(staff.staffId) ||
+        toOptionalString(staff.id) ||
+        toOptionalString(staff.userId) || "").toLowerCase();
+    const staffPhone =
+      (toOptionalString(staff.phoneNumber) || toOptionalString(staff.phone) || "").toLowerCase();
+    const staffEmployeeCode = (toOptionalString(staff.employeeCode) || "").toLowerCase();
+
+    if (staffId && (staffId === currentId || staffId === currentUserId)) return true;
+    if (staffPhone && currentPhone && staffPhone === currentPhone) return true;
+    if (
+      staffEmployeeCode &&
+      currentEmployeeCode &&
+      staffEmployeeCode === currentEmployeeCode
+    )
+      return true;
+
+    return false;
+  });
 };
 
 export const loginService = async (
@@ -197,26 +315,50 @@ export const loginService = async (
   };
 };
 
-export const forgotPasswordService = async (phoneNumber: string) => {
-  const response = await authForgotPassword({ phoneNumber });
+// export const forgotPasswordService = async (phoneNumber: string) => {
+//   const response = await authForgotPassword({ phoneNumber });
+
+//   if (!response.success) {
+//     throw new Error(response.message || "Forgot password request failed");
+//   }
+
+//   return response.data;
+// };
+
+// export const resetPasswordService = async (
+//   phoneNumber: string,
+//   otpCode: string,
+//   newPassword: string
+// ) => {
+//   const response = await authResetPassword({ phoneNumber, otpCode, newPassword });
+
+//   if (!response.success) {
+//     throw new Error(response.message || "Reset password failed");
+//   }
+
+//   return response.data;
+// };
+
+export const logoutService = async () => {
+  const response = await authLogout();
 
   if (!response.success) {
-    throw new Error(response.message || "Forgot password request failed");
+    throw new Error(response.message || "Logout failed");
   }
 
   return response.data;
 };
 
-export const resetPasswordService = async (
-  phoneNumber: string,
-  otpCode: string,
-  newPassword: string
-) => {
-  const response = await authResetPassword({ phoneNumber, otpCode, newPassword });
+export const getStaffProfileService = async (currentUser: User): Promise<User> => {
+  const response = await fetchStaffs({ pageNumber: 1, pageSize: 200 });
 
   if (!response.success) {
-    throw new Error(response.message || "Reset password failed");
+    throw new Error(response.message || "Failed to fetch staff profile");
   }
 
-  return response.data;
+  const candidates = pickStaffCandidates(response.data);
+  if (!candidates.length) return currentUser;
+
+  const matched = findMatchingStaff(candidates, currentUser) || candidates[0];
+  return toNormalizedUserFromStaff(matched, currentUser);
 };

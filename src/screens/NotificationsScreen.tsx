@@ -27,6 +27,7 @@ import {
   markNotificationRead,
 } from "../utils/api";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { formatDate } from "../utils/date";
 
 import { Ionicons } from "@expo/vector-icons";
 
@@ -214,14 +215,7 @@ export default function NotificationsScreen({
 }
 
 function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "Just finished";
-  if (mins < 60) return `${mins} minutes ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} hours ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days} days ago`;
+  return formatDate(iso);
 }
 
 const styles = StyleSheet.create({

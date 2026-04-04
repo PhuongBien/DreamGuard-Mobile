@@ -25,6 +25,7 @@ import { KBSButton, SectionCard, InfoRow } from "../../components/shared";
 import { TaskStackParamList } from "../../types/navigation";
 import { useTask } from "../../context/TaskContext";
 import { formatVietnamAddress } from "../../utils/address";
+import { formatDate } from "../../utils/date";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "CheckInOut">;
 
@@ -74,13 +75,12 @@ export default function CheckInOutScreen({ route, navigation }: Props) {
     try {
       setLoading(true);
 
-      const { status } =
-        await Location.requestForegroundPermissionsAsync();
+      const { status } = await Location.requestForegroundPermissionsAsync();
 
       if (status !== "granted") {
         Alert.alert(
           "Permission required",
-          "Location permission is required to check in."
+          "Location permission is required to check in.",
         );
         return;
       }
@@ -124,9 +124,9 @@ export default function CheckInOutScreen({ route, navigation }: Props) {
     try {
       setLoading(true);
       await startProcessing(task.id);
-      Alert.alert("Success", "Đã bắt đầu thực hiện công việc.");
+      Alert.alert("Success", "Task has started processing.");
     } catch (error) {
-      Alert.alert("Error", "Không thể bắt đầu xử lý.");
+      Alert.alert("Error", "Cannot start processing.");
     } finally {
       setLoading(false);
     }
@@ -138,11 +138,11 @@ export default function CheckInOutScreen({ route, navigation }: Props) {
     try {
       setLoading(true);
       await completeTask(task.id);
-      Alert.alert("Hoàn thành", "Công việc đã hoàn thành.", [
+      Alert.alert("Completed", "Task has been completed.", [
         { text: "OK", onPress: () => navigation.goBack() },
       ]);
     } catch (error) {
-      Alert.alert("Error", "Không thể hoàn thành công việc.");
+      Alert.alert("Error", "Cannot complete the task.");
     } finally {
       setLoading(false);
     }
@@ -168,53 +168,51 @@ export default function CheckInOutScreen({ route, navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor={Colors.primary900}
-      />
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
 
       <ScrollView contentContainerStyle={styles.content}>
         {/* Clock */}
         <View style={styles.clockCard}>
           <Text style={styles.clockTime}>{formatTime(currentTime)}</Text>
-          <Text style={styles.clockDate}>
-            {formatFullDate(currentTime)}
-          </Text>
+          <Text style={styles.clockDate}>{formatFullDate(currentTime)}</Text>
         </View>
 
         {/* Task Info */}
         <SectionCard title="Task Information">
           <InfoRow
-  iconType="material"
-  iconName="badge"
-  label="Task Code"
-  value={task.taskCode}
-/>
+            iconType="material"
+            iconName="badge"
+            label="Task Code"
+            value={task.taskCode}
+          />
 
-<InfoRow
-  iconType="material"
-  iconName="title"
-  label="Title"
-  value={task.title}
-/>
+          <InfoRow
+            iconType="material"
+            iconName="title"
+            label="Title"
+            value={task.title}
+          />
 
-<InfoRow
-  iconType="material"
-  iconName="location-on"
-  label="Location"
-  value={displayAddress}
-/>
+          <InfoRow
+            iconType="material"
+            iconName="location-on"
+            label="Location"
+            value={displayAddress}
+          />
 
-<InfoRow
-  iconType="material"
-  iconName="person"
-  label="Customer"
-  value={task.customer.name}
-/>
+          <InfoRow
+            iconType="material"
+            iconName="person"
+            label="Customer"
+            value={task.customer.name}
+          />
         </SectionCard>
 
         {/* Duration */}
-        {(status === "checked_in" || status === "in_progress" || status === "checked_out" || status === "completed") && (
+        {(status === "checked_in" ||
+          status === "in_progress" ||
+          status === "checked_out" ||
+          status === "completed") && (
           <SectionCard title="Working Duration">
             <Text style={styles.durationValue}>{getDuration()}</Text>
           </SectionCard>
@@ -222,56 +220,59 @@ export default function CheckInOutScreen({ route, navigation }: Props) {
 
         {/* Actions */}
         <View style={styles.actions}>
-            {loading ? (
-              <ActivityIndicator
-                size="large"
-                color={Colors.primary700}
-              />
-            ) : (
-              <>
-                {status === "pending" && (
-                  <KBSButton
-                    title="CHECK-IN"
-                    onPress={handleCheckIn}
-                    variant="primary"
-                    size="lg"
-                  />
-                )}
+          {loading ? (
+            <ActivityIndicator size="large" color={Colors.primary700} />
+          ) : (
+            <>
+              {status === "pending" && (
+                <KBSButton
+                  title="CHECK-IN"
+                  onPress={handleCheckIn}
+                  variant="primary"
+                  size="lg"
+                />
+              )}
 
-                {status === "checked_in" && (
-                  <KBSButton
-                    title="NHẬN VIỆC / BẮT ĐẦU"
-                    onPress={handleStartProcessing}
-                    variant="primary"
-                    size="lg"
-                  />
-                )}
+              {status === "checked_in" && (
+                <KBSButton
+                  title="START PROCESSING"
+                  onPress={handleStartProcessing}
+                  variant="primary"
+                  size="lg"
+                />
+              )}
 
-                {status === "in_progress" && (
-                  <KBSButton
-                    title="CHECK-OUT"
-                    onPress={handleCheckOut}
-                    variant="primary"
-                    size="lg"
-                  />
-                )}
+              {status === "in_progress" && (
+                <KBSButton
+                  title="CHECK-OUT"
+                  onPress={handleCheckOut}
+                  variant="primary"
+                  size="lg"
+                />
+              )}
 
-                {status === "checked_out" && (
-                  <KBSButton
-                    title="HOÀN THÀNH"
-                    onPress={handleComplete}
-                    variant="primary"
-                    size="lg"
-                  />
-                )}
+              {status === "checked_out" && (
+                <KBSButton
+                  title="COMPLETE"
+                  onPress={handleComplete}
+                  variant="primary"
+                  size="lg"
+                />
+              )}
 
-                {status === "completed" && (
-                  <Text style={{ textAlign: "center", marginTop: 12, color: Colors.gray600 }}>
-                    Công việc đã hoàn thành
-                  </Text>
-                )}
-              </>
-            )}
+              {status === "completed" && (
+                <Text
+                  style={{
+                    textAlign: "center",
+                    marginTop: 12,
+                    color: Colors.gray600,
+                  }}
+                >
+                  Task has been completed
+                </Text>
+              )}
+            </>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -289,12 +290,7 @@ function formatTime(d: Date) {
 }
 
 function formatFullDate(d: Date) {
-  return d.toLocaleDateString("vi-VN", {
-    weekday: "long",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  return formatDate(d);
 }
 
 const styles = StyleSheet.create({

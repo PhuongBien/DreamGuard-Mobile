@@ -1,12 +1,12 @@
 // KBS Staff App — Profile Screen (Professional Version)
 
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   StatusBar,
-  TouchableOpacity,
+  ActivityIndicator,
   ScrollView,
   Alert,
 } from "react-native";
@@ -33,11 +33,48 @@ import {
 
 import { useAuth } from "../context/AuthContext";
 import { useTask } from "../context/TaskContext";
-import * as ImagePicker from "expo-image-picker";
+import { getStaffProfileService } from "../services/auth.service";
+import { formatDate } from "../utils/date";
 
 export default function ProfileScreen() {
   const { user, logout, setUser } = useAuth();
   const { tasks } = useTask();
+  const [profileUser, setProfileUser] = useState(user);
+  const [isProfileLoading, setIsProfileLoading] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadStaffProfile = async () => {
+      if (!user) return;
+
+      setIsProfileLoading(true);
+
+      try {
+        const latestProfile = await getStaffProfileService(user);
+        if (!isMounted) return;
+
+        setProfileUser(latestProfile);
+        setUser((prev) => (prev ? { ...prev, ...latestProfile } : prev));
+      } catch {
+        if (!isMounted) return;
+        setProfileUser(user);
+      } finally {
+        if (isMounted) {
+          setIsProfileLoading(false);
+        }
+      }
+    };
+
+    loadStaffProfile();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user, setUser]);
+
+  const displayUser = useMemo(() => profileUser || user, [profileUser, user]);
+
   if (!user) {
     return (
       <SafeAreaView
@@ -47,11 +84,22 @@ export default function ProfileScreen() {
       </SafeAreaView>
     );
   }
-  const roleInfo = RoleConfig[user.role] || {
-    label: user.role,
+
+  if (!displayUser) {
+    return (
+      <SafeAreaView
+        style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+      >
+        <ActivityIndicator size="large" color={Colors.primary700} />
+      </SafeAreaView>
+    );
+  }
+
+  const roleInfo = RoleConfig[displayUser.role] || {
+    label: displayUser.role,
   };
 
-  const myTasks = tasks.filter((t) => t.assignedTo === user.id);
+  const myTasks = tasks.filter((t) => t.assignedTo === displayUser.id);
   const completed = myTasks.filter((t) => t.status === "completed").length;
   const pending = myTasks.filter((t) => t.status === "pending").length;
   const inProgress = myTasks.filter((t) => t.status === "in_progress").length;
@@ -59,7 +107,13 @@ export default function ProfileScreen() {
   const handleLogout = () => {
     Alert.alert("Log out", "Are you sure you want to log out?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Log out", style: "destructive", onPress: logout },
+      {
+        text: "Log out",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+        },
+      },
     ]);
   };
 
@@ -74,28 +128,6 @@ export default function ProfileScreen() {
     { icon: "information-circle-outline", label: "Version", value: "1.0.0" },
   ];
 
-  const handleChangeAvatar = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Quyền bị từ chối", "Cần quyền truy cập thư viện ảnh");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.7,
-    });
-
-    if (!result.canceled) {
-      const uri = result.assets[0].uri;
-
-      // ✅ update avatar local
-      setUser((prev) => (prev ? { ...prev, avatarUrl: uri } : prev));
-    }
-  };
-
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
@@ -103,25 +135,21 @@ export default function ProfileScreen() {
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* HEADER */}
         <View style={styles.header}>
-          {/* <Avatar name={user.name} size={90} imageUrl={user.avatarUrl} /> */}
           <View style={{ position: "relative" }}>
-            <TouchableOpacity onPress={handleChangeAvatar} activeOpacity={0.85}>
-              <Avatar name={user.name} size={90} imageUrl={user.avatarUrl} />
-            </TouchableOpacity>
-
-            {/* Camera icon */}
-            <View style={styles.cameraBadge}>
-              <Ionicons name="camera" size={16} color="white" />
-            </View>
+            <Avatar
+              name={displayUser.name}
+              size={90}
+              imageUrl={displayUser.avatarUrl}
+            />
           </View>
 
-          <Text
-            style={{ color: Colors.primary100, marginTop: 8, fontSize: 12 }}
-          >
-            Nhấn để đổi ảnh
-          </Text>
+          <Text style={styles.name}>{displayUser.name}</Text>
 
-          <Text style={styles.name}>{user.name}</Text>
+          {/* {isProfileLoading ? (
+            <Text style={styles.readOnlyHint}>Syncing staff profile...</Text>
+          ) : (
+            <Text style={styles.readOnlyHint}>Staff profile (read-only)</Text>
+          )} */}
 
           <View style={styles.roleRow}>
             <Ionicons
@@ -132,9 +160,9 @@ export default function ProfileScreen() {
             <Text style={styles.role}>{roleInfo.label}</Text>
           </View>
 
-          <View style={styles.codeBadge}>
-            <Text style={styles.codeText}>{user.employeeCode}</Text>
-          </View>
+          {/* <View style={styles.codeBadge}>
+            <Text style={styles.codeText}>{displayUser.employeeCode || "N/A"}</Text>
+          </View> */}
         </View>
 
         {/* STATS */}
@@ -153,7 +181,7 @@ export default function ProfileScreen() {
               iconName="mail-outline"
               iconColor={Colors.primary700}
               label="Email"
-              value={user.email}
+              value={displayUser.email || "N/A"}
             />
 
             <InfoRow
@@ -161,23 +189,43 @@ export default function ProfileScreen() {
               iconName="call-outline"
               iconColor={Colors.primary700}
               label="Phone"
-              value={user.phone}
+              value={displayUser.phone || "N/A"}
             />
 
             <InfoRow
               iconType="ion"
-              iconName="business-outline"
+              iconName="calendar-outline"
               iconColor={Colors.primary700}
-              label="Department"
-              value={user.department ?? null}
+              label="Date of Birth"
+              value={
+                displayUser.dateOfBirth
+                  ? formatDate(displayUser.dateOfBirth)
+                  : "N/A"
+              }
+            />
+
+            <InfoRow
+              iconType="ion"
+              iconName="briefcase-outline"
+              iconColor={Colors.primary700}
+              label="Position"
+              value={displayUser.position || "N/A"}
+            />
+
+            <InfoRow
+              iconType="ion"
+              iconName="location-outline"
+              iconColor={Colors.primary700}
+              label="Address"
+              value={displayUser.address || "N/A"}
             />
           </SectionCard>
 
-          <SectionCard title="Settings">
+          {/* <SectionCard title="Settings">
             {MENU_ITEMS.map((item, idx) => (
               <React.Fragment key={item.label}>
                 {idx > 0 && <Divider style={{ marginVertical: 6 }} />}
-                <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                <View style={styles.menuItem}>
                   <Ionicons
                     name={item.icon as any}
                     size={20}
@@ -188,16 +236,10 @@ export default function ProfileScreen() {
                   <Text style={styles.menuLabel}>{item.label}</Text>
 
                   <Text style={styles.menuValue}>{item.value}</Text>
-
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={Colors.gray300}
-                  />
-                </TouchableOpacity>
+                </View>
               </React.Fragment>
             ))}
-          </SectionCard>
+          </SectionCard> */}
 
           <KBSButton
             title="Log out"
@@ -237,25 +279,17 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 28,
   },
 
-  cameraBadge: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    backgroundColor: Colors.primary600,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: Colors.primary800,
-  },
-
   name: {
     fontSize: Typography["2xl"],
     fontWeight: "800",
     color: Colors.white,
     marginTop: 14,
+  },
+
+  readOnlyHint: {
+    marginTop: 8,
+    fontSize: 12,
+    color: Colors.primary100,
   },
 
   roleRow: {

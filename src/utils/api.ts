@@ -161,30 +161,30 @@ export interface AuthForgotPayload {
 
 // forgotpassword
 
-export const authForgotPassword = (payload: AuthForgotPayload) =>
-  apiFetch<{ message: string }>("/api/auths/forgotpassword", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+// export const authForgotPassword = (payload: AuthForgotPayload) =>
+//   apiFetch<{ message: string }>("/api/auths/forgotpassword", {
+//     method: "POST",
+//     body: JSON.stringify(payload),
+//   });
 
-export interface AuthResetPayload {
-  phoneNumber: string;
-  otpCode: string;
-  newPassword: string;
-}
+// export interface AuthResetPayload {
+//   phoneNumber: string;
+//   otpCode: string;
+//   newPassword: string;
+// }
 
 // resetpassword
 
-export const authResetPassword = (payload: AuthResetPayload) =>
-  apiFetch<{ message: string }>("/api/auths/resetpassword", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+// export const authResetPassword = (payload: AuthResetPayload) =>
+//   apiFetch<{ message: string }>("/api/auths/resetpassword", {
+//     method: "POST",
+//     body: JSON.stringify(payload),
+//   });
 
 //  logout
 
 export const authLogout = () =>
-  apiFetch<void>("/auth/logout", { method: "POST" });
+  apiFetch<void>("/api/auths/logout", { method: "POST" });
 
 //  auth/refresh
 
@@ -197,6 +197,27 @@ export const authRefreshToken = (refreshToken: string) =>
 // auth/me
 
 export const authGetMe = () => apiFetch<User>("/auth/me");
+
+// STAFF API
+
+export interface StaffListParams {
+  pageNumber?: number;
+  pageSize?: number;
+  search?: string;
+}
+
+export const fetchStaffs = (params: StaffListParams = {}) => {
+  const query = new URLSearchParams();
+
+  if (params.pageNumber) query.append("pageNumber", String(params.pageNumber));
+  if (params.pageSize) query.append("pageSize", String(params.pageSize));
+  if (params.search) query.append("search", params.search);
+
+  const queryString = query.toString();
+  const endpoint = queryString ? `/api/staffs?${queryString}` : "/api/staffs";
+
+  return apiFetch<any>(endpoint);
+};
 
 // TASK API
 
@@ -269,6 +290,31 @@ export const fetchTasks = async (params: TaskListParams = {}) => {
 
 export const fetchTaskById = (taskId: string) =>
   apiFetch<Task>(`/api/ServiceTasks/${taskId}`);
+
+export const fetchServicePackageMappingById = (mappingId: string) =>
+  apiFetch<any>(`/api/ServicePackageMappings/${mappingId}`);
+
+export const fetchServiceTaskEvidences = (
+  taskId: string,
+  params?: { pageNumber?: number; pageSize?: number },
+) => {
+  const query = new URLSearchParams();
+
+  if (params?.pageNumber) {
+    query.append("pageNumber", String(params.pageNumber));
+  }
+
+  if (params?.pageSize) {
+    query.append("pageSize", String(params.pageSize));
+  }
+
+  const queryString = query.toString();
+  const endpoint = queryString
+    ? `/api/ServiceEvidences/service-tasks/${taskId}/service-evidences?${queryString}`
+    : `/api/ServiceEvidences/service-tasks/${taskId}/service-evidences`;
+
+  return apiFetch<any>(endpoint);
+};
 
 //  ServiceTasks/:taskId/update{status}Status
 
@@ -403,6 +449,24 @@ export const uploadTaskPhoto = async (payload: UploadPhotoPayload) => {
       );
     }
   }
+};
+
+// RATINGS API
+
+export const getRatingsByStaffId = (
+  staffId: string,
+  params?: { pageNumber?: number; pageSize?: number },
+) => {
+  const query = new URLSearchParams();
+  if (params?.pageNumber) query.append("pageNumber", String(params.pageNumber));
+  if (params?.pageSize) query.append("pageSize", String(params.pageSize));
+
+  const queryString = query.toString();
+  const endpoint = queryString
+    ? `/api/Ratings/GetAllRatingsByStaffId/${staffId}?${queryString}`
+    : `/api/Ratings/GetAllRatingsByStaffId/${staffId}`;
+
+  return apiFetch<any>(endpoint);
 };
 
 // [API: DELETE /tasks/:taskId/photos/:photoId]

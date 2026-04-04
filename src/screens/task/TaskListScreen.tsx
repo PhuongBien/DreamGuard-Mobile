@@ -27,6 +27,7 @@ import {
 import { useTask } from "../../context/TaskContext";
 import { useAuth } from "../../context/AuthContext";
 import { formatVietnamAddress } from "../../utils/address";
+import { formatDate } from "../../utils/date";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "TaskList">;
 
@@ -178,7 +179,7 @@ export default function TaskListScreen({ navigation }: Props) {
           <View style={styles.metaRow}>
             <Ionicons name="time-outline" size={14} color={Colors.primary700} />
             <Text style={styles.metaText}>
-              {formatDateTimeDisplay(item.dueDate, item.dueTime)}
+              {formatDateTimeDisplay(item.dueDate)}
             </Text>
           </View>
 
@@ -350,24 +351,9 @@ function normalizeDateTime(dateText?: string, timeText?: string) {
   return parsed;
 }
 
-function formatDateTimeDisplay(dateText?: string, timeText?: string) {
-  if (!dateText) return "--/--/---- · --:--";
-
-  if (timeText && /^\d{2}:\d{2}$/.test(timeText)) {
-    return `${dateText} · ${timeText}`;
-  }
-
-  const dateObj = new Date(dateText);
-  if (Number.isNaN(dateObj.getTime())) {
-    return `${dateText} · ${timeText || "--:--"}`;
-  }
-
-  const yyyy = dateObj.getFullYear();
-  const mm = String(dateObj.getMonth() + 1).padStart(2, "0");
-  const dd = String(dateObj.getDate()).padStart(2, "0");
-  const hhmm = timeText || "--:--";
-
-  return `${yyyy}-${mm}-${dd} · ${hhmm}`;
+function formatDateTimeDisplay(dateText?: string) {
+  if (!dateText) return "--/--/----";
+  return formatDate(dateText);
 }
 
 function getInitial(name?: string) {

@@ -142,8 +142,15 @@ products?: ProductItem[];
 
 photos?: TaskPhoto[];
   notes?: TaskNote[];
-
   checkInOut?: TaskCheckInOut;
+
+  rating?: {
+    id?: string;
+    score: number;
+    comment?: string | null;
+    customerName?: string | null;
+    createdAt?: string | null;
+  } | null;
 
   isSynced?: boolean;
 }

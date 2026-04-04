@@ -9,6 +9,8 @@ import {
 import {
   fetchTasks,
   fetchTaskById as apiFetchTaskById,
+  fetchServicePackageMappingById as apiFetchServicePackageMappingById,
+  fetchServiceTaskEvidences as apiFetchServiceTaskEvidences,
   updateTaskStatus as apiUpdateTaskStatus,
   updateTaskCheckedInStatus,
   updateTaskProcessingStatus,
@@ -186,6 +188,41 @@ const inferPhotoType = (
   return "evidence";
 };
 
+const normalizePhotoList = (
+  items: unknown[],
+  taskId: string,
+  fallbackUploadedBy?: string,
+): TaskPhoto[] => {
+  const seenPhotoUrls = new Set<string>();
+
+  return items
+    .map((item: any, index: number) => {
+      const url =
+        typeof item === "string"
+          ? item
+          : String(item?.url ?? item?.imageUrl ?? item?.fileUrl ?? "");
+
+      if (!url || seenPhotoUrls.has(url)) {
+        return null;
+      }
+
+      seenPhotoUrls.add(url);
+
+      return {
+        id: String(
+          item?.id ?? item?.serviceEvidenceId ?? `photo_${taskId}_${index}`,
+        ),
+        url,
+        type: inferPhotoType(item, url, index),
+        uploadedAt: toIso(
+          item?.createdAt ?? item?.uploadedAt ?? new Date().toISOString(),
+        ),
+        uploadedBy: String(item?.uploadedBy ?? fallbackUploadedBy ?? ""),
+      } as TaskPhoto;
+    })
+    .filter((item): item is TaskPhoto => !!item);
+};
+
 const normalizeTask = (input: unknown): Task => {
   const raw = isRecord(input) ? input : {};
   // console.log("RAW STATUS FROM API:", raw.status);
@@ -262,6 +299,7 @@ const normalizeTask = (input: unknown): Task => {
   // Backend: { checkIn: "2026-03-28T10:21:05Z", checkOut: null }
   const rawCheckIn = raw.checkIn;
   const rawCheckOut = raw.checkOut;
+  const checkOutPayload = isRecord(rawCheckOut) ? rawCheckOut : {};
   const checkInTime =
     rawCheckIn && typeof rawCheckIn === "string" && rawCheckIn !== "null"
       ? rawCheckIn
@@ -280,30 +318,40 @@ const normalizeTask = (input: unknown): Task => {
     ...(Array.isArray(raw.serviceOrderImageUrl) ? raw.serviceOrderImageUrl : []),
     ...(Array.isArray(raw.serviceEvidences) ? raw.serviceEvidences : []),
     ...(Array.isArray(raw.evidences) ? raw.evidences : []),
+    ...(Array.isArray(raw.checkOutImages) ? raw.checkOutImages : []),
+    ...(Array.isArray(raw.checkoutImages) ? raw.checkoutImages : []),
+    ...(Array.isArray(raw.checkOutImageUrls) ? raw.checkOutImageUrls : []),
+    ...(Array.isArray(raw.checkoutImageUrls) ? raw.checkoutImageUrls : []),
+    ...(Array.isArray(raw.afterImages) ? raw.afterImages : []),
+    ...(Array.isArray(raw.afterImageUrls) ? raw.afterImageUrls : []),
+    ...(Array.isArray(checkOutPayload.images) ? checkOutPayload.images : []),
+    ...(Array.isArray(checkOutPayload.evidences)
+      ? checkOutPayload.evidences
+      : []),
+    ...(Array.isArray(checkOutPayload.imageUrls)
+      ? checkOutPayload.imageUrls
+      : []),
+    ...(Array.isArray(checkOutPayload.photos) ? checkOutPayload.photos : []),
+    ...(Array.isArray(checkOutPayload.files) ? checkOutPayload.files : []),
   ];
 
-  const seenPhotoUrls = new Set<string>();
-  const photos: TaskPhoto[] = rawPhotoItems
-    .map((item: any, index: number) => {
-      const url =
-        typeof item === "string"
-          ? item
-          : String(item?.url ?? item?.imageUrl ?? item?.fileUrl ?? "");
+  const rawSinglePhotoItems: unknown[] = [
+    raw.checkOutImageUrl,
+    raw.checkoutImageUrl,
+    raw.afterImageUrl,
+    checkOutPayload.imageUrl,
+    checkOutPayload.photoUrl,
+    checkOutPayload.fileUrl,
+  ].filter((item) => !!item);
 
-      if (!url || seenPhotoUrls.has(url)) {
-        return null;
-      }
-      seenPhotoUrls.add(url);
-
-      return {
-        id: String(item?.id ?? item?.serviceEvidenceId ?? `photo_${taskId}_${index}`),
-        url,
-        type: inferPhotoType(item, url, index),
-        uploadedAt: toIso(item?.createdAt ?? item?.uploadedAt ?? nowIso, nowIso),
-        uploadedBy: String(item?.uploadedBy ?? raw.staffId ?? ""),
-      } as TaskPhoto;
-    })
-    .filter((item): item is TaskPhoto => !!item);
+  const photos = normalizePhotoList(
+    [...rawPhotoItems, ...rawSinglePhotoItems],
+    taskId,
+    String(raw.staffId ?? ""),
+  ).map((photo) => ({
+    ...photo,
+    uploadedAt: toIso(photo.uploadedAt, nowIso),
+  }));
 
   // ── Products from serviceOrderItems ───────────────────────────────────────
   const products = orderItems.map((item: any, index: number) => ({
@@ -424,6 +472,171 @@ const parseTaskFromAny = (payload: unknown): Task | null => {
   return normalizeTask(payload);
 };
 
+const extractPagedItems = (payload: unknown): unknown[] => {
+  if (Array.isArray(payload)) return payload;
+  if (!isRecord(payload)) return [];
+
+  if (Array.isArray(payload.items)) return payload.items;
+  if (Array.isArray(payload.results)) return payload.results;
+
+  if (isRecord(payload.data)) {
+    if (Array.isArray(payload.data.items)) return payload.data.items;
+    if (Array.isArray(payload.data.results)) return payload.data.results;
+  }
+
+  return [];
+};
+
+const extractTotalPages = (payload: unknown): number => {
+  if (!isRecord(payload)) return 1;
+
+  const candidates = [
+    payload.totalPages,
+    isRecord(payload.data) ? payload.data.totalPages : undefined,
+    payload.pageCount,
+    isRecord(payload.data) ? payload.data.pageCount : undefined,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return 1;
+};
+
+const fetchAllServiceEvidencePhotos = async (
+  taskId: string,
+  fallbackUploadedBy?: string,
+): Promise<TaskPhoto[]> => {
+  const pageSize = 100;
+  const firstResponse = await apiFetchServiceTaskEvidences(taskId, {
+    pageNumber: 1,
+    pageSize,
+  });
+
+  const firstPayload = firstResponse.data ?? firstResponse;
+  const firstItems = extractPagedItems(firstPayload);
+  const totalPages = extractTotalPages(firstPayload);
+  const allItems = [...firstItems];
+
+  for (let page = 2; page <= totalPages; page += 1) {
+    const pageResponse = await apiFetchServiceTaskEvidences(taskId, {
+      pageNumber: page,
+      pageSize,
+    });
+
+    allItems.push(...extractPagedItems(pageResponse.data ?? pageResponse));
+  }
+
+  return normalizePhotoList(allItems, taskId, fallbackUploadedBy);
+};
+
+const parseServicePackageMapping = (
+  payload: unknown,
+  fallback?: Task["servicePackageMapping"],
+): Task["servicePackageMapping"] | undefined => {
+  if (!payload) return fallback;
+
+  const unwrap = (value: unknown): Record<string, any> | null => {
+    if (!isRecord(value)) return null;
+    if (isRecord(value.data)) return value.data;
+    return value;
+  };
+
+  const root = unwrap(payload);
+  if (!root) return fallback;
+
+  const servicePackage = unwrap(root.servicePackage) ?? {};
+  const productType = unwrap(root.productType) ?? {};
+
+  const servicePackageMappingId = String(
+    root.servicePackageMappingId ?? root.id ?? fallback?.servicePackageMappingId ?? "",
+  ).trim();
+
+  if (!servicePackageMappingId) {
+    return fallback;
+  }
+
+  return {
+    servicePackageMappingId,
+    servicePackageId: String(
+      root.servicePackageId ??
+        servicePackage.servicePackageId ??
+        servicePackage.id ??
+        fallback?.servicePackageId ??
+        "",
+    ).trim(),
+    productTypeId: String(
+      root.productTypeId ??
+        productType.productTypeId ??
+        productType.id ??
+        fallback?.productTypeId ??
+        "",
+    ).trim(),
+    price: toNumberOrUndefined(root.price ?? root.mappingPrice ?? fallback?.price),
+    duration: toNumberOrUndefined(
+      root.duration ?? servicePackage.duration ?? fallback?.duration,
+    ),
+    servicePackage: {
+      servicePackageId: String(
+        servicePackage.servicePackageId ??
+          servicePackage.id ??
+          fallback?.servicePackage?.servicePackageId ??
+          "",
+      ).trim(),
+      packageName: String(
+        servicePackage.packageName ?? fallback?.servicePackage?.packageName ?? "",
+      ).trim(),
+      status: String(servicePackage.status ?? fallback?.servicePackage?.status ?? "").trim() || undefined,
+      duration: toNumberOrUndefined(
+        servicePackage.duration ?? fallback?.servicePackage?.duration,
+      ),
+      suitableFor:
+        String(
+          servicePackage.suitableFor ?? fallback?.servicePackage?.suitableFor ?? "",
+        ).trim() || undefined,
+      benefits:
+        normalizeMultilineText(
+          servicePackage.benefits ?? fallback?.servicePackage?.benefits,
+        ) ?? undefined,
+      serviceContent:
+        normalizeMultilineText(
+          servicePackage.serviceContent ?? fallback?.servicePackage?.serviceContent,
+        ) ?? undefined,
+      imageUrl:
+        String(servicePackage.imageUrl ?? fallback?.servicePackage?.imageUrl ?? "").trim() ||
+        undefined,
+      publicId:
+        String(servicePackage.publicId ?? fallback?.servicePackage?.publicId ?? "").trim() ||
+        undefined,
+    },
+    productType: {
+      productTypeId: String(
+        productType.productTypeId ??
+          productType.id ??
+          fallback?.productType?.productTypeId ??
+          "",
+      ).trim(),
+      productTypeName: String(
+        productType.productTypeName ?? fallback?.productType?.productTypeName ?? "",
+      ).trim(),
+      isActive:
+        typeof productType.isActive === "boolean"
+          ? productType.isActive
+          : fallback?.productType?.isActive,
+      addPrice: toNumberOrUndefined(
+        productType.addPrice ?? fallback?.productType?.addPrice,
+      ),
+      createdAt:
+        String(productType.createdAt ?? fallback?.productType?.createdAt ?? "").trim() ||
+        undefined,
+    },
+  };
+};
+
 export const TaskService = {
   // ================= GET =================
 
@@ -446,7 +659,54 @@ export const TaskService = {
 
   async getTaskById(taskId: string): Promise<Task | undefined> {
     const response = await apiFetchTaskById(taskId);
-    return parseTaskFromAny(response.data) ?? undefined;
+    const parsed = parseTaskFromAny(response.data) ?? undefined;
+
+    if (!parsed) {
+      return parsed;
+    }
+
+    let mergedTask = parsed;
+
+    try {
+      const evidencePhotos = await fetchAllServiceEvidencePhotos(
+        taskId,
+        parsed.assignedTo,
+      );
+
+      if (evidencePhotos.length) {
+        mergedTask = {
+          ...mergedTask,
+          photos: mergePhotoSets(mergedTask.photos || [], evidencePhotos),
+        };
+      }
+    } catch {
+      mergedTask = parsed;
+    }
+
+    const mappingId = mergedTask.servicePackageMapping?.servicePackageMappingId;
+
+    if (!mappingId) {
+      return mergedTask;
+    }
+
+    try {
+      const mappingResponse = await apiFetchServicePackageMappingById(mappingId);
+      const mergedMapping = parseServicePackageMapping(
+        mappingResponse.data,
+        mergedTask.servicePackageMapping,
+      );
+
+      if (!mergedMapping) {
+        return mergedTask;
+      }
+
+      return {
+        ...mergedTask,
+        servicePackageMapping: mergedMapping,
+      };
+    } catch {
+      return mergedTask;
+    }
   },
 
   // ================= UPDATE STATUS =================
@@ -593,3 +853,19 @@ export const TaskService = {
     return refreshed;
   },
 };
+
+function mergePhotoSets(existingPhotos: TaskPhoto[], incomingPhotos: TaskPhoto[]) {
+  const byUrl = new Map<string, TaskPhoto>();
+
+  for (const photo of existingPhotos) {
+    if (!photo.url) continue;
+    byUrl.set(photo.url, photo);
+  }
+
+  for (const photo of incomingPhotos) {
+    if (!photo.url) continue;
+    byUrl.set(photo.url, photo);
+  }
+
+  return Array.from(byUrl.values());
+}

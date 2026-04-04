@@ -1,388 +1,124 @@
-# 🛏️ KBS Staff App — Tài liệu kỹ thuật
+# DreamGuard Mobile
 
-> Ứng dụng nội bộ dành cho nhân viên hệ thống KBS (Chăn Ga Gối Trẻ Em)  
-> React Native + TypeScript | Demo Version 1.0.0
+Ứng dụng di động dành cho nhân viên hiện trường theo dõi và xử lý công việc dịch vụ. App được xây dựng bằng Expo, React Native và TypeScript, tập trung vào các luồng vận hành cơ bản như đăng nhập, xem danh sách task, xem chi tiết công việc, check-in/check-out, tải ảnh minh chứng và theo dõi thông báo.
 
----
+## Tính năng chính
 
-## 📁 Cấu trúc dự án
+- Đăng nhập tài khoản nhân viên qua backend.
+- Xem danh sách công việc theo trạng thái.
+- Xem chi tiết từng công việc.
+- Check-in, chuyển trạng thái xử lý, check-out và hoàn tất task.
+- Tải ảnh minh chứng cho công việc.
+- Xem thông báo và hồ sơ cá nhân.
 
-```
-KBS-Staff-App/
-├── App.tsx                          # Root component + navigation router
-├── package.json                     # Dependencies
-├── tsconfig.json                    # TypeScript config
-└── src/
-    ├── types/
-    │   └── index.ts                 # Tất cả TypeScript types/interfaces
-    ├── constants/
-    │   └── theme.ts                 # Colors, Typography, Spacing, TaskTypeConfig
-    ├── utils/
-    │   ├── api.ts                   # 📌 API service layer (tất cả endpoints)
-    │   └── mockData.ts              # Mock data cho demo
-    ├── hooks/
-    │   └── useAuth.tsx              # Auth Context + useAuth hook
-    ├── components/
-    │   └── shared.tsx               # Reusable UI components
-    └── screens/
-        ├── LoginScreen.tsx          # Màn hình đăng nhập
-        ├── TaskListScreen.tsx       # Danh sách nhiệm vụ
-        ├── TaskDetailScreen.tsx     # Chi tiết nhiệm vụ (tabs)
-        ├── CheckInOutScreen.tsx     # Check-in / Check-out
-        ├── NotificationsScreen.tsx  # Thông báo
-        └── ProfileScreen.tsx        # Hồ sơ nhân viên
-```
+## Công nghệ sử dụng
 
----
+- Expo 54
+- React Native 0.81
+- React 19
+- TypeScript
+- React Navigation
 
-## 🎨 Thiết kế UI
+## Yêu cầu môi trường
 
-### Bảng màu KBS
-| Tên         | Hex       | Dùng cho                    |
-|-------------|-----------|------------------------------|
-| `primary100`| `#BDE8F5` | Nền nhạt, badge info         |
-| `primary500`| `#4988C4` | Nút phụ, icon accent         |
-| `primary700`| `#1C4D8D` | Nút chính, label active      |
-| `primary900`| `#0F2854` | Header, navbar               |
+Trước khi chạy app, cần cài sẵn:
 
----
+- Node.js 18 trở lên
+- npm hoặc yarn
+- Expo Go trên điện thoại, hoặc Android Studio / Xcode simulator
 
-## 🔐 Luồng Authentication
+Lưu ý:
 
-```
-LoginScreen
-    │
-    ├─ POST /auth/login ──→ { token, user }
-    │                             │
-    │                    setAuthToken(token)
-    │                    setUser(user)
-    │
-    └──→ MainApp (Tab Navigator)
-              ├─ Tasks
-              ├─ Notifications
-              └─ Profile
-```
+- Chạy iOS simulator chỉ thực hiện được trên macOS.
+- Dự án hiện đang gọi API trực tiếp tới backend tại `https://cohabit.vn`.
+- Nếu cần đổi API, sửa hằng số `BASE_URL` trong `src/utils/api.ts`.
 
-### Demo credentials (không cần backend):
-| Email                  | Password  | Vai trò              |
-|------------------------|-----------|----------------------|
-| an.nguyen@kbs.vn       | demo123   | Nhân viên giao hàng  |
-| bich.tran@kbs.vn       | demo123   | Nhân viên vệ sinh    |
-| minh.le@kbs.vn         | demo123   | Quản lý              |
-| lan.pham@kbs.vn        | demo123   | Nhân viên kho        |
+## Cài đặt và chạy dự án
 
----
-
-## 📌 Danh sách Backend APIs cần triển khai
-
-### BASE URL
-```
-https://api.kbs.vn/staff/v1
-```
-
-### Authentication Header
-```
-Authorization: Bearer <JWT_TOKEN>
-```
-
----
-
-### 🔑 AUTH
-
-#### POST /auth/login
-```json
-// Request Body
-{
-  "email": "string",
-  "password": "string"
-}
-// Response
-{
-  "success": true,
-  "data": {
-    "token": "JWT string",
-    "refreshToken": "string",
-    "expiresIn": 86400,
-    "user": { /* User object */ }
-  }
-}
-```
-
-#### POST /auth/logout
-```
-Header: Authorization Bearer <token>
-Response: { "success": true }
-```
-
-#### POST /auth/refresh
-```json
-// Body: { "refreshToken": "string" }
-// Response: { "token": "string", "expiresIn": 86400 }
-```
-
-#### GET /auth/me
-```
-Response: User object (same as login user field)
-```
-
----
-
-### 📋 TASKS
-
-#### GET /tasks
-```
-Query params:
-  page        (default: 1)
-  pageSize    (default: 20)
-  status      (pending | in_progress | completed | cancelled | on_hold)
-  date        (ISO date: 2025-01-15)
-  search      (string: search by title, code, customer name)
-
-⚠️ Backend nên tự động lọc theo user đang đăng nhập (từ token)
-   Chỉ trả về tasks được assign cho user đó.
-
-Response:
-{
-  "success": true,
-  "data": {
-    "items": [ Task[] ],
-    "total": 50,
-    "page": 1,
-    "pageSize": 20,
-    "totalPages": 3
-  }
-}
-```
-
-#### GET /tasks/:taskId
-```
-Response: Task object (đầy đủ thông tin)
-```
-
-#### PATCH /tasks/:taskId/status
-```json
-// Body
-{
-  "status": "in_progress | completed | cancelled | on_hold | pending",
-  "note": "optional note string"
-}
-// Response: Task object (updated)
-```
-
-#### POST /tasks/:taskId/notes
-```json
-// Body: { "content": "string" }
-// Response: Task object with new note appended
-```
-
----
-
-### 📸 PHOTOS
-
-#### POST /tasks/:taskId/photos
-```
-Content-Type: multipart/form-data
-Fields:
-  photo  (file) — image file (JPEG/PNG)
-  type   (string) — "before" | "after" | "evidence"
-
-Response: Task object (updated with new photo)
-```
-
-#### DELETE /tasks/:taskId/photos/:photoId
-```
-Response: Task object (updated)
-```
-
----
-
-### 📍 CHECK-IN / CHECK-OUT
-
-#### POST /tasks/:taskId/checkin
-```json
-// Body (tất cả optional)
-{
-  "latitude": 10.762622,
-  "longitude": 106.660172,
-  "address": "123 Nguyễn Huệ, Q1, TPHCM"
-}
-// Response: Task object (status → in_progress, checkIn time set)
-// Tự động set task status = "in_progress" nếu đang "pending"
-```
-
-#### POST /tasks/:taskId/checkout
-```json
-// Body
-{
-  "latitude": 10.762622,
-  "longitude": 106.660172,
-  "address": "string",
-  "completionNote": "optional string"
-}
-// Response: Task object (status → completed, checkOut time set)
-```
-
----
-
-### 🔔 NOTIFICATIONS
-
-#### GET /notifications
-```
-Query: page, pageSize, isRead (true|false|all)
-Response: PaginatedResponse<Notification>
-```
-
-#### PATCH /notifications/:notificationId/read
-```
-Response: { "success": true }
-```
-
-#### PATCH /notifications/read-all
-```
-Response: { "success": true }
-```
-
-#### GET /notifications/unread-count
-```
-Response: { "count": 3 }
-```
-
----
-
-### 📱 PUSH NOTIFICATIONS
-
-#### POST /devices/register
-```json
-// Body
-{
-  "token": "FCM_or_APNS_device_token",
-  "platform": "android | ios"
-}
-// Response: { "success": true }
-// Gọi sau khi đăng nhập thành công để đăng ký push notification
-```
-
-**Khuyến nghị:** Dùng Firebase Cloud Messaging (FCM) cho cả Android và iOS.
-
----
-
-### 🗓️ SCHEDULE
-
-#### GET /tasks/schedule
-```
-Query:
-  startDate  (ISO: 2025-01-13)
-  endDate    (ISO: 2025-01-19)
-
-Response: Task[] (tasks trong khoảng ngày của user)
-```
-
----
-
-## 🗂️ Data Models
-
-### User
-```typescript
-{
-  id:           string
-  name:         string
-  email:        string
-  phone:        string
-  role:         'delivery_driver' | 'cleaner' | 'sales_staff' | 'warehouse_staff' | 'technician' | 'manager'
-  avatar?:      string (URL)
-  department:   string
-  employeeCode: string
-}
-```
-
-### Task
-```typescript
-{
-  id:            string
-  taskCode:      string          // e.g. "KBS-2025-001"
-  title:         string
-  description:   string
-  type:          TaskType        // delivery|pickup|cleaning|repair|trade_in|exchange|custom_order|warehouse_inbound|warehouse_outbound|sales_consultation
-  status:        TaskStatus      // pending|in_progress|completed|cancelled|on_hold
-  priority:      TaskPriority    // low|medium|high|urgent
-  assignedTo:    string          // User.id
-  assignedToName: string
-  createdAt:     string          // ISO datetime
-  updatedAt:     string
-  dueDate:       string          // ISO date
-  dueTime?:      string          // "HH:MM"
-  customer:      CustomerInfo
-  products:      ProductItem[]
-  photos:        TaskPhoto[]
-  notes:         TaskNote[]
-  checkInOut:    CheckInOut
-  estimatedDuration?: number    // minutes
-  serviceAddress?:    string
-  orderRef?:          string    // Mã đơn từ website
-  tags?:              string[]
-}
-```
-
----
-
-## 🚀 Hướng dẫn cài đặt & chạy demo
+### 1. Cài dependency
 
 ```bash
-# 1. Clone & install
-cd dreamGuard-mobile-new
 npm install
-
-# 2. Chạy với Expo
-npx expo start
-
-# 3. Scan QR bằng Expo Go app trên điện thoại
-#    hoặc nhấn 'a' để chạy Android emulator, 'i' cho iOS simulator
 ```
 
-### Chạy chế độ demo (không cần backend)
-App đã được tích hợp mock data hoàn chỉnh.  
-Chỉ cần đăng nhập với một trong các tài khoản demo phía trên.
+### 2. Khởi động Metro / Expo
 
-### Kết nối backend thực
-1. Mở `src/utils/api.ts`
-2. Thay đổi `BASE_URL`:
-   ```typescript
-   const BASE_URL = 'https://api.kbs.vn/staff/v1';
-   // → 'https://your-backend.com/staff/v1'
-   ```
-3. Trong `src/hooks/useAuth.tsx`, thay khối "DEMO MODE" bằng:
-   ```typescript
-   const res = await authLogin({ email, password });
-   const { token, user } = res.data;
-   ```
+```bash
+npm start
+```
 
----
+Sau khi chạy lệnh trên, Expo DevTools sẽ hiện mã QR để mở app bằng Expo Go.
 
-## 📦 Dependencies quan trọng
+### 3. Chạy theo nền tảng
 
-| Package                         | Mục đích                            |
-|---------------------------------|-------------------------------------|
-| `expo-image-picker`             | Chọn ảnh từ thư viện hoặc camera    |
-| `expo-camera`                   | Chụp ảnh trực tiếp                  |
-| `expo-location`                 | Lấy GPS cho check-in/out            |
-| `expo-notifications`            | Push notifications                  |
-| `expo-secure-store`             | Lưu token an toàn (thay AsyncStorage)|
-| `@react-navigation/*`           | Navigation (nếu mở rộng)            |
+Android:
 
----
+```bash
+npm run android
+```
 
-## 🔮 Phát triển tiếp theo (Phase 2) neesu làm kịp
+iOS:
 
-- [ ] Tích hợp GPS thực với `expo-location`
-- [ ] Push notification realtime qua FCM
-- [ ] Offline mode với sync khi có mạng
-- [ ] Lịch trình dạng calendar view  
-- [ ] Report / thống kê cho manager
-- [ ] Chat nội bộ giữa nhân viên
-- [ ] Scan QR code đơn hàng
-- [ ] Digital signature xác nhận giao hàng
-- [ ] Dark mode
+```bash
+npm run ios
+```
 
----
+Web:
 
-*KBS Staff App v1.0 — Tài liệu nội bộ*
+```bash
+npm run web
+```
+
+## Cách sử dụng app
+
+### 1. Đăng nhập
+
+- Mở app.
+- Nhập số điện thoại và mật khẩu nhân viên.
+- Sau khi đăng nhập thành công, app sẽ chuyển vào màn hình chính.
+
+account test role staff cleaning
+sđt: 0931309408
+mk: Staff@123
+
+### 2. Xem danh sách công việc
+
+- Vào tab công việc để xem các task được giao.
+- Có thể lọc task theo trạng thái như pending, checked in, in progress, checked out, completed.
+- Nhấn vào từng task để xem chi tiết.
+
+### 3. Xử lý công việc
+
+Trong màn hình chi tiết task, người dùng có thể thực hiện luồng cơ bản:
+
+1. Check-in khi bắt đầu tới điểm làm việc.
+2. Chuyển sang trạng thái đang xử lý.
+3. Tải ảnh minh chứng nếu cần.
+4. Check-out khi hoàn thành tại hiện trường.
+5. Hoàn tất công việc.
+
+### 4. Theo dõi thông tin liên quan
+
+- Tab thông báo: xem các cập nhật liên quan tới công việc.
+- Tab hồ sơ: xem thông tin nhân viên.
+
+## Cấu trúc thư mục chính
+
+```text
+src/
+  components/     # UI component dùng lại
+  constants/      # màu sắc, spacing, typography, theme
+  context/        # AuthContext, TaskContext
+  hooks/          # custom hooks
+  navigation/     # điều hướng app
+  screens/        # các màn hình chính
+  services/       # service gọi nghiệp vụ
+  types/          # định nghĩa type/interface
+  utils/          # helper và API layer
+```
+
+## Ghi chú
+
+- App hiện dùng backend thật, không phải mock hoàn toàn.
+- Một số chức năng phụ thuộc dữ liệu backend như đăng nhập, task list, trạng thái task, rating và ảnh minh chứng.
+- Nếu gặp lỗi mạng hoặc không đăng nhập được, cần kiểm tra lại API và tài khoản backend trước.

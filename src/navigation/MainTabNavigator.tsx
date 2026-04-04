@@ -8,6 +8,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { MainTabParamList } from "../types/navigation";
 import TaskStackNavigator from "./TaskStackNavigator";
 import NotificationsScreen from "../screens/NotificationsScreen";
+import RatingsScreen from "../screens/RatingsScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 
 import { Colors } from "../constants/theme";
@@ -62,6 +63,18 @@ export default function MainTabNavigator() {
               size={size}
               color={color}
             />
+          ),
+        }}
+      />
+
+      {/* ================= RATINGS ================= */}
+      <Tab.Screen
+        name="Ratings"
+        component={RatingsScreen}
+        options={{
+          tabBarLabel: "My Ratings",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="star-outline" size={size} color={color} />
           ),
         }}
       />

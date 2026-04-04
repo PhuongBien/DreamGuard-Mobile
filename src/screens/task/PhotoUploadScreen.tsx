@@ -19,8 +19,8 @@ import { Colors, Spacing, Typography, BorderRadius } from "../../constants/theme
 type Props = NativeStackScreenProps<TaskStackParamList, "PhotoUpload">;
 
 const PHOTO_LABELS: Record<"before" | "after", string> = {
-  before: "Ảnh trước",
-  after: "Ảnh sau",
+  before: "Before Photo",
+  after: "After Photo",
 };
 
 export const PhotoUploadScreen = ({ route, navigation }: Props) => {
@@ -38,7 +38,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Cần quyền truy cập", "Vui lòng cho phép truy cập thư viện ảnh.");
+        Alert.alert("Permission denied", "Permission to access the photo library is required.");
         return;
       }
 
@@ -57,7 +57,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
         });
       }
     } catch (error: any) {
-      Alert.alert("Lỗi chọn ảnh", error?.message || "Không thể mở thư viện ảnh.");
+      Alert.alert("Error selecting image", error?.message || "Unable to open image library.");
     }
   };
 
@@ -65,7 +65,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Cần quyền truy cập", "Vui lòng cho phép truy cập camera.");
+        Alert.alert("Permission denied", "Permission to access the camera is required.");
         return;
       }
 
@@ -84,25 +84,25 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
         });
       }
     } catch (error: any) {
-      Alert.alert("Lỗi chụp ảnh", error?.message || "Không thể mở camera.");
+      Alert.alert("Error taking photo", error?.message || "Unable to open camera.");
     }
   };
 
   const handleChooseImage = () => {
     Alert.alert(
-      "Chọn ảnh",
-      "Bạn muốn chụp ảnh mới hay chọn từ thư viện?",
+      "Choose Image",
+      "Do you want to take a new photo or select from the library?",
       [
-        { text: "Chụp ảnh", onPress: takePhoto },
-        { text: "Thư viện", onPress: pickFromLibrary },
-        { text: "Hủy", style: "cancel" },
+        { text: "Take Photo", onPress: takePhoto },
+        { text: "Library", onPress: pickFromLibrary },
+        { text: "Cancel", style: "cancel" },
       ]
     );
   };
 
   const handleUpload = async () => {
     if (!imageUri) {
-      Alert.alert("Chưa chọn ảnh", "Vui lòng chọn hoặc chụp ảnh trước khi tải lên.");
+      Alert.alert("No Image Selected", "Please select or take a photo before uploading.");
       return;
     }
 
@@ -119,12 +119,12 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
 
       await getTaskById(taskId, { forceRefresh: true });
 
-      Alert.alert("Thành công", "Ảnh đã được tải lên.", [
+      Alert.alert("Success", "Photo has been uploaded.", [
         { text: "OK", onPress: () => navigation.goBack() },
       ]);
     } catch (error: any) {
-      const message = error?.message || "Không thể tải lên ảnh.";
-      Alert.alert("Lỗi tải ảnh", message);
+      const message = error?.message || "Unable to upload photo.";
+      Alert.alert("Upload Error", message);
     } finally {
       setLoading(false);
     }
@@ -147,7 +147,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
         ) : (
           <View style={styles.placeholderWrap}>
             <Ionicons name="camera-outline" size={40} color={Colors.gray400} />
-            <Text style={styles.placeholder}>Nhấn để chọn hoặc chụp ảnh</Text>
+            <Text style={styles.placeholder}>Tap to select or take a photo</Text>
           </View>
         )}
       </TouchableOpacity>
@@ -159,7 +159,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
           disabled={loading}
         >
           <Ionicons name="refresh-outline" size={16} color={Colors.primary700} />
-          <Text style={styles.rePickText}>Chọn ảnh khác</Text>
+          <Text style={styles.rePickText}>Choose another image</Text>
         </TouchableOpacity>
       )}
 
@@ -175,7 +175,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
         {loading ? (
           <ActivityIndicator color="#fff" />
         ) : (
-          <Text style={styles.buttonText}>Tải lên</Text>
+          <Text style={styles.buttonText}>Upload</Text>
         )}
       </TouchableOpacity>
     </View>

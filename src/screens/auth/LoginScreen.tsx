@@ -27,23 +27,19 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import AntDesign from "@expo/vector-icons/AntDesign";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { AuthStackParamList } from "../../types/navigation";
-import { Ionicons } from "@expo/vector-icons";
+// import { Ionicons } from "@expo/vector-icons";
 
-type Props = NativeStackScreenProps<
-  AuthStackParamList,
-  "Login"
->;
+type Props = NativeStackScreenProps<AuthStackParamList, "Login">;
 
 const getLoginErrorMessage = (error: unknown): string => {
-  const fallback =
-    "Incorrect password or phone number, please log in again.";
+  const fallback = "Incorrect password or phone number, please log in again.";
 
   const rawMessage =
     error instanceof Error
       ? error.message
       : typeof error === "string"
-      ? error
-      : "";
+        ? error
+        : "";
 
   const normalized = rawMessage.trim().toLowerCase();
   if (!normalized) {
@@ -52,7 +48,9 @@ const getLoginErrorMessage = (error: unknown): string => {
 
   const hasPasswordHint = /password|mat\s*khau|mật\s*khẩu/.test(normalized);
   const hasPhoneHint =
-    /phone|phone\s*number|so\s*dien\s*thoai|số\s*điện\s*thoại/.test(normalized) ||
+    /phone|phone\s*number|so\s*dien\s*thoai|số\s*điện\s*thoại/.test(
+      normalized,
+    ) ||
     normalized.includes("user not found") ||
     normalized.includes("account not found") ||
     normalized.includes("phone not found");
@@ -108,7 +106,6 @@ export default function LoginScreen({ navigation }: Props) {
   };
 
   const [checked, setChecked] = useState(false);
-
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -207,26 +204,28 @@ export default function LoginScreen({ navigation }: Props) {
               ) : null}
 
               {/* Remember + Forgot */}
-              <View style={styles.row}>
+              {/* <View style={styles.row}>
                 <Pressable
-        style={styles.checkboxWrap}
-        onPress={() => setChecked(!checked)}
-      >
-        <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
-          {checked && (
-            <Ionicons name="checkmark" size={16} color="#fff" />
-          )}
-        </View>
+                  style={styles.checkboxWrap}
+                  onPress={() => setChecked(!checked)}
+                >
+                  <View
+                    style={[styles.checkbox, checked && styles.checkboxChecked]}
+                  >
+                    {checked && (
+                      <Ionicons name="checkmark" size={16} color="#fff" />
+                    )}
+                  </View>
 
-        <Text style={styles.remember}>Remember me</Text>
-      </Pressable>
+                  <Text style={styles.remember}>Remember me</Text>
+                </Pressable>
 
                 <TouchableOpacity
                   onPress={() => navigation.navigate("ForgotPassword")}
                 >
                   <Text style={{ color: "#2E5B9A" }}>Forgot password?</Text>
                 </TouchableOpacity>
-              </View>
+              </View> */}
 
               {/* Login Button */}
               <KBSButton

@@ -23,9 +23,12 @@ import {
   Shadow,
 } from "../../constants/theme";
 import { TaskStackParamList } from "../../types/navigation";
-import { TaskStatus } from "../../types";
+import { Rating, TaskStatus } from "../../types";
 import { useTask } from "../../context/TaskContext";
+import { useAuth } from "../../context/AuthContext";
+import { getRatingsByStaffId } from "../../utils/api";
 import { formatVietnamAddress } from "../../utils/address";
+import { formatDate, formatTime } from "../../utils/date";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "TaskDetail">;
 
@@ -61,6 +64,7 @@ const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string }> = {
 
 export default function TaskDetailScreen({ route, navigation }: Props) {
   const { taskId } = route.params;
+  const { user } = useAuth();
   const {
     tasks,
     getTaskById,
@@ -76,6 +80,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   );
   const [detailLoading, setDetailLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [taskRating, setTaskRating] = useState<Rating | null>(null);
 
   useEffect(() => {
   let mounted = true;
@@ -112,6 +117,144 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     }, [getTaskById, taskId]),
   );
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const normalizeKey = (value: unknown) =>
+      String(value ?? "").trim().toLowerCase();
+
+    const extractItems = (payload: any): any[] => {
+      if (Array.isArray(payload)) return payload;
+      if (Array.isArray(payload?.items)) return payload.items;
+      if (Array.isArray(payload?.results)) return payload.results;
+      if (Array.isArray(payload?.data?.items)) return payload.data.items;
+      if (Array.isArray(payload?.data?.results)) return payload.data.results;
+      return [];
+    };
+
+    const findRatingByKeys = (items: any[], keys: string[]) =>
+      items.find((item) => {
+        const candidateKeys = [
+          item?.serviceOrderId,
+          item?.soId,
+          item?.orderId,
+          item?.serviceOrderCode,
+          item?.soCode,
+          item?.orderCode,
+        ]
+          .map((value) => normalizeKey(value))
+          .filter(Boolean);
+
+        return candidateKeys.some((key) => keys.includes(key));
+      });
+
+    const loadRating = async () => {
+      if (!user?.id) {
+        setTaskRating(null);
+        return;
+      }
+
+      // Always ensure we have a fresh detail snapshot so first open is consistent.
+      const baseTask =
+        task || (await getTaskById(taskId, { forceRefresh: true }));
+
+      if (cancelled || !baseTask) {
+        if (!cancelled) setTaskRating(null);
+        return;
+      }
+
+      if (baseTask.rating?.score) {
+        setTaskRating({
+          id: baseTask.rating.id || baseTask.id,
+          score: baseTask.rating.score,
+          comment: baseTask.rating.comment,
+          createdAt: baseTask.rating.createdAt,
+        });
+        return;
+      }
+
+      const orderKeys = [baseTask.orderRef, baseTask.taskCode, baseTask.id]
+        .map((value) => normalizeKey(value))
+        .filter(Boolean);
+
+      if (!orderKeys.length) {
+        setTaskRating(null);
+        return;
+      }
+
+      try {
+        const first = await getRatingsByStaffId(user.id, {
+          pageNumber: 1,
+          pageSize: 50,
+        });
+
+        if (cancelled) return;
+
+        const firstPayload = first.data as any;
+        const firstItems = extractItems(firstPayload);
+        let found = findRatingByKeys(firstItems, orderKeys);
+
+        const totalPages = Number(
+          firstPayload?.totalPages ?? firstPayload?.data?.totalPages ?? 1,
+        );
+
+        if (!found && Number.isFinite(totalPages) && totalPages > 1) {
+          for (let page = 2; page <= totalPages; page += 1) {
+            const pageResponse = await getRatingsByStaffId(user.id, {
+              pageNumber: page,
+              pageSize: 50,
+            });
+
+            if (cancelled) return;
+
+            const match = findRatingByKeys(
+              extractItems(pageResponse.data),
+              orderKeys,
+            );
+            if (match) {
+              found = match;
+              break;
+            }
+          }
+        }
+
+        if (cancelled) return;
+
+        if (!found) {
+          setTaskRating(null);
+          return;
+        }
+
+        const score = Number(found.score ?? found.stars ?? found.star ?? 0);
+        if (!Number.isFinite(score) || score <= 0) {
+          setTaskRating(null);
+          return;
+        }
+
+        setTaskRating({
+          id: String(found.id ?? found.ratingId ?? baseTask.id),
+          score,
+          comment:
+            String(
+              found.comment ?? found.feedback ?? found.note ?? "",
+            ).trim() || null,
+          createdAt:
+            String(
+              found.createdAt ?? found.createdDate ?? found.ratingDate ?? "",
+            ).trim() || null,
+        });
+      } catch {
+        if (!cancelled) setTaskRating(null);
+      }
+    };
+
+    loadRating();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId, task, user?.id, getTaskById]);
+
   if (!task) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -142,12 +285,11 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const productTypeInfo = mapping?.productType;
 
   const photoList = task.photos || [];
-  const explicitBeforePhoto = photoList.find((p) => p.type === "before");
-  const explicitAfterPhoto = photoList.find((p) => p.type === "after");
-  const beforePhoto = explicitBeforePhoto || photoList[0];
-  const afterPhoto =
-    explicitAfterPhoto ||
-    photoList.find((p) => p.id !== (beforePhoto?.id || ""));
+  const sortedPhotoList = [...photoList].sort((a, b) => {
+    const aTime = new Date(a.uploadedAt || 0).getTime();
+    const bTime = new Date(b.uploadedAt || 0).getTime();
+    return bTime - aTime;
+  });
   const displayAddress =
     formatVietnamAddress(task.customer.address) || "No address available";
 
@@ -264,7 +406,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           <View style={styles.infoRow}>
             <Ionicons name="time-outline" size={18} color={Colors.primary500} />
             <Text style={styles.infoText}>
-              {formatSchedule(task.dueDate, task.dueTime)}
+              {formatSchedule(task.dueDate)}
             </Text>
           </View>
 
@@ -331,7 +473,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             <View style={styles.serviceRow}>
               <Text style={styles.serviceLabel}>Price:</Text>
               <Text style={styles.serviceValue}>
-                {formatDuration(mapping?.duration ?? packageInfo?.duration)}
+                {formatCurrency(mapping?.price)}
               </Text>
             </View>
 
@@ -372,7 +514,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
               </View>
             )}
 
-            {!!packageInfo?.benefits && (
+            {/* {!!packageInfo?.benefits && (
               <View style={styles.serviceBlock}>
                 <Text style={styles.serviceLabel}>Benefits</Text>
                 {packageInfo.benefits.split("\n").map((line, idx) => (
@@ -381,9 +523,9 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                   </Text>
                 ))}
               </View>
-            )}
+            )} */}
 
-            {!!packageInfo?.imageUrl && (
+            {/* {!!packageInfo?.imageUrl && (
               <View style={styles.serviceBlock}>
                 <Text style={styles.serviceLabel}>Service Package Image</Text>
                 <Image
@@ -392,7 +534,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                   resizeMode="cover"
                 />
               </View>
-            )}
+            )} */}
           </View>
         )}
 
@@ -401,13 +543,13 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
 
           {task.checkInOut?.checkIn && (
             <Text style={styles.infoText}>
-              Check-in: {task.checkInOut.checkIn.time}
+              Check-in: {formatDate(task.checkInOut.checkIn.time)}  •  {formatTime(task.checkInOut.checkIn.time)}
             </Text>
           )}
 
           {task.checkInOut?.checkOut && (
             <Text style={styles.infoText}>
-              Check-out: {task.checkInOut.checkOut.time}
+              Check-out: {formatDate(task.checkInOut.checkOut.time)}  •  {formatTime(task.checkInOut.checkOut.time)}
             </Text>
           )}
         </View>
@@ -415,84 +557,84 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>IMAGES</Text>
 
-          <View style={styles.photoSection}>
-            <View style={styles.photoHeaderRow}>
-              <Text style={styles.photoLabel}>Before Photo</Text>
-              <TouchableOpacity
-                onPress={() => handleOpenPhotoUpload("before")}
-                activeOpacity={0.8}
-              >
-                <View style={styles.uploadLinkRow}>
-                  <Ionicons
-                    name="camera-outline"
-                    size={16}
-                    color={Colors.primary500}
-                  />
-                  <Text style={styles.uploadLinkText}>Take Photo</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
+          <View style={styles.photoHeaderRow}>
+            <Text style={styles.photoLabel}>All Photos ({sortedPhotoList.length})</Text>
+          </View>
 
+          <View style={styles.photoActionRow}>
             <TouchableOpacity
-              style={styles.photoPlaceholder}
+              style={styles.photoActionButton}
               onPress={() => handleOpenPhotoUpload("before")}
               activeOpacity={0.8}
             >
-              {beforePhoto ? (
-                <Image
-                  source={{ uri: beforePhoto.url }}
-                  style={styles.photoImage}
-                  resizeMode="cover"
-                />
-              ) : (
-                <Ionicons
-                  name="camera-outline"
-                  size={24}
-                  color={Colors.gray400}
-                />
-              )}
+              <Ionicons name="camera-outline" size={16} color={Colors.primary500} />
+              <Text style={styles.uploadLinkText}>Upload Before</Text>
             </TouchableOpacity>
-          </View>
-
-          <View style={[styles.photoSection, styles.photoSectionBottom]}>
-            <View style={styles.photoHeaderRow}>
-              <Text style={styles.photoLabel}>After Photo</Text>
-              <TouchableOpacity
-                onPress={() => handleOpenPhotoUpload("after")}
-                activeOpacity={0.8}
-              >
-                <View style={styles.uploadLinkRow}>
-                  <Ionicons
-                    name="camera-outline"
-                    size={16}
-                    color={Colors.primary500}
-                  />
-                  <Text style={styles.uploadLinkText}>Take Photo</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
 
             <TouchableOpacity
-              style={styles.photoPlaceholder}
+              style={styles.photoActionButton}
               onPress={() => handleOpenPhotoUpload("after")}
               activeOpacity={0.8}
             >
-              {afterPhoto ? (
-                <Image
-                  source={{ uri: afterPhoto.url }}
-                  style={styles.photoImage}
-                  resizeMode="cover"
-                />
-              ) : (
+              <Ionicons name="camera-outline" size={16} color={Colors.primary500} />
+              <Text style={styles.uploadLinkText}>Upload After</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.photoGrid}>
+            {sortedPhotoList.length ? (
+              sortedPhotoList.map((photo, index) => (
+                <View key={`${photo.id}_${index}`} style={styles.photoItem}>
+                  <Image
+                    source={{ uri: photo.url }}
+                    style={styles.photoImage}
+                    resizeMode="cover"
+                  />
+                </View>
+              ))
+            ) : (
+              <TouchableOpacity
+                style={styles.photoPlaceholder}
+                onPress={() => handleOpenPhotoUpload("before")}
+                activeOpacity={0.8}
+              >
                 <Ionicons
                   name="camera-outline"
                   size={24}
                   color={Colors.gray400}
                 />
-              )}
-            </TouchableOpacity>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
+
+        {!!taskRating && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>RATING</Text>
+
+            <View style={styles.ratingRow}>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <Ionicons
+                  key={i}
+                  name={i <= Math.round(taskRating.score) ? "star" : "star-outline"}
+                  size={20}
+                  color={i <= Math.round(taskRating.score) ? Colors.warning : Colors.gray300}
+                />
+              ))}
+              <Text style={styles.ratingScoreText}>{taskRating.score.toFixed(1)}</Text>
+            </View>
+
+            {!!taskRating.comment && (
+              <Text style={styles.ratingComment}>{taskRating.comment}</Text>
+            )}
+
+            {!!taskRating.createdAt && (
+              <Text style={styles.ratingDateText}>
+                {formatDate(taskRating.createdAt)}
+              </Text>
+            )}
+          </View>
+        )}
       </ScrollView>
 
       {!!primaryNextStatus && (
@@ -542,14 +684,12 @@ function getActionLabel(status: TaskStatus): string {
   }
 }
 
-function formatSchedule(dueDate?: string, dueTime?: string) {
-  const dateText = dueDate || "--/--/----";
-  const timeText = dueTime || "--:--";
-  return `${dateText} · ${timeText}`;
+function formatSchedule(dueDate?: string) {
+  return dueDate ? formatDate(dueDate) : "--/--/----";
 }
 
 function formatCurrency(value?: number) {
-  if (!value) return "-";
+  if (value === undefined || value === null) return "-";
   return `${value.toLocaleString("vi-VN")} VND`;
 }
 
@@ -758,6 +898,22 @@ const styles = StyleSheet.create({
   photoSectionBottom: {
     marginTop: Spacing.base,
   },
+  photoActionRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: Spacing.sm,
+  },
+  photoActionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#B9CDE2",
+    backgroundColor: "#ECF4FC",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
   photoHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -778,6 +934,20 @@ const styles = StyleSheet.create({
     color: Colors.primary500,
     fontSize: Typography.base,
     fontWeight: "500",
+  },
+  photoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  photoItem: {
+    width: 74,
+    height: 74,
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: "#F3F6FB",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
   },
   photoPlaceholder: {
     width: 74,
@@ -820,5 +990,27 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontSize: Typography.lg,
     fontWeight: "700",
+  },
+  ratingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  ratingScoreText: {
+    marginLeft: 8,
+    color: "#23364D",
+    fontSize: Typography.base,
+    fontWeight: "700",
+  },
+  ratingComment: {
+    marginTop: Spacing.sm,
+    color: "#23364D",
+    fontSize: Typography.md,
+    lineHeight: 22,
+  },
+  ratingDateText: {
+    marginTop: 8,
+    color: Colors.gray500,
+    fontSize: Typography.sm,
   },
 });

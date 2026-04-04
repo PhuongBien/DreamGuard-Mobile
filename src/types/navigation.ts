@@ -14,8 +14,8 @@ export type RootStackParamList = {
  */
 export type AuthStackParamList = {
   Login: undefined;
-  ForgotPassword: undefined;
-  ResetPassword: { phoneNumber: string };
+  // ForgotPassword: undefined;
+  // ResetPassword: { phoneNumber: string };
 };
 
 /**
@@ -25,6 +25,7 @@ export type MainTabParamList = {
   Tasks: undefined;
   Schedule: undefined;
   Notifications: undefined;
+  Ratings: undefined;
   Profile: undefined;
 };
 
