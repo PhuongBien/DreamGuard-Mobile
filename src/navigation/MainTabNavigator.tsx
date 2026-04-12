@@ -14,10 +14,14 @@ import ProfileScreen from "../screens/ProfileScreen";
 import { Colors } from "../constants/theme";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useAuth } from "../context/AuthContext";
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
 export default function MainTabNavigator() {
+  const { user } = useAuth();
+  const showRatingsTab = user?.role === "cleaner";
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -68,16 +72,18 @@ export default function MainTabNavigator() {
       />
 
       {/* ================= RATINGS ================= */}
-      <Tab.Screen
-        name="Ratings"
-        component={RatingsScreen}
-        options={{
-          tabBarLabel: "My Ratings",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="star-outline" size={size} color={color} />
-          ),
-        }}
-      />
+      {showRatingsTab ? (
+        <Tab.Screen
+          name="Ratings"
+          component={RatingsScreen}
+          options={{
+            tabBarLabel: "My Ratings",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="star-outline" size={size} color={color} />
+            ),
+          }}
+        />
+      ) : null}
 
       {/* ================= PROFILE ================= */}
       <Tab.Screen

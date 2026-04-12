@@ -206,6 +206,8 @@ export interface StaffListParams {
   search?: string;
 }
 
+export const fetchStaffProfile = () => apiFetch<any>("/api/staffs");
+
 export const fetchStaffs = (params: StaffListParams = {}) => {
   const query = new URLSearchParams();
 
@@ -230,6 +232,11 @@ export interface TaskListParams {
   staffId?: string;
 }
 
+export interface ShippingTaskStatusPayload {
+  evidenceUrls?: string[];
+  reason?: string;
+}
+
 const taskStatusToBackendStatus = (
   status: TaskStatus,
 ):
@@ -240,7 +247,7 @@ const taskStatusToBackendStatus = (
   | "Completed"
   | "ForcedCancelled"
   | "OnHold" => {
-  const mapping: Record<TaskStatus, ReturnType<typeof taskStatusToBackendStatus>> = {
+  const mapping: Partial<Record<TaskStatus, ReturnType<typeof taskStatusToBackendStatus>>> = {
     pending: "Pending",
     checked_in: "CheckedIn",
     in_progress: "Processing",
@@ -286,6 +293,97 @@ export const fetchTasks = async (params: TaskListParams = {}) => {
   );
 };
 
+const taskStatusToShippingBackendStatus = (
+  status: TaskStatus,
+): "Pending" | "Delivering" | "Arrived" | "Delivered" | "Returned" => {
+  const mapping: Partial<Record<TaskStatus, "Pending" | "Delivering" | "Arrived" | "Delivered" | "Returned">> = {
+    pending: "Pending",
+    delivering: "Delivering",
+    arrived: "Arrived",
+    delivered: "Delivered",
+    returned: "Returned",
+  };
+
+  return mapping[status] ?? "Pending";
+};
+
+export const fetchShippingTasks = (params: TaskListParams = {}) => {
+  const query = new URLSearchParams();
+  const pageNumber = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
+
+  query.append("pageNumber", String(pageNumber));
+  query.append("pageSize", String(pageSize));
+
+  if (params.status && params.status !== "all") {
+    query.append("status", taskStatusToShippingBackendStatus(params.status));
+  }
+
+  if (params.search) query.append("search", params.search);
+  if (params.date) query.append("date", params.date);
+
+  const queryString = query.toString();
+  const endpoint = queryString
+    ? `/api/ShippingTasks?${queryString}`
+    : "/api/ShippingTasks";
+
+  return apiFetch<PaginatedResponse<Task>>(endpoint);
+};
+
+export const fetchShippingTaskById = (taskId: string) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}`);
+
+export const fetchOrderById = (orderId: string) =>
+  apiFetch<any>(`/api/order/${orderId}`);
+
+// export const fetchPaymentByOrderId = (orderId: string) =>
+//   apiFetch<any>(`/api/payment/order/${orderId}`);
+
+export const fetchPaymentByOrderId = async (orderId: string) => {
+  // Payment method/status are provided by order detail endpoint.
+  try {
+    return await apiFetch<any>(`/api/order/${orderId}`);
+  } catch {
+    // Keep compatibility with older backends exposing payment by separate route.
+    return apiFetch<any>(`/api/payment/order/${orderId}`);
+  }
+};
+
+export const updateShippingTaskDelivering = (
+  taskId: string,
+  payload: ShippingTaskStatusPayload = {},
+) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/delivering`, {
+    method: "PUT",
+    body: JSON.stringify({ evidenceUrls: payload.evidenceUrls ?? [] }),
+  });
+
+export const updateShippingTaskArrived = (taskId: string) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/arrived`, {
+    method: "PUT",
+  });
+
+export const updateShippingTaskDelivered = (
+  taskId: string,
+  payload: ShippingTaskStatusPayload = {},
+) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/delivered`, {
+    method: "PUT",
+    body: JSON.stringify({ evidenceUrls: payload.evidenceUrls ?? [] }),
+  });
+
+export const updateShippingTaskReturned = (
+  taskId: string,
+  payload: ShippingTaskStatusPayload,
+) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/returned`, {
+    method: "PUT",
+    body: JSON.stringify({
+      reason: payload.reason ?? "",
+      evidenceUrls: payload.evidenceUrls ?? [],
+    }),
+  });
+
 //  ServiceTasks/:taskId
 
 export const fetchTaskById = (taskId: string) =>
@@ -323,7 +421,7 @@ export const updateTaskStatus = (
   status: TaskStatus,
   note?: string,
 ) => {
-  const mapping: Record<TaskStatus, string> = {
+  const mapping: Partial<Record<TaskStatus, string>> = {
     pending: "Pending",
     in_progress: "Processing",
     checked_in: "CheckedIn",
@@ -381,22 +479,46 @@ export interface UploadPhotoPayload {
   mimeType?: string;
 }
 
+export interface UploadDeliveryPhotoPayload extends UploadPhotoPayload {
+  orderId?: string;
+}
+
+interface EvidenceUploadCandidate {
+  key: "serviceTaskId" | "shippingTaskId" | "soId" | "orderId";
+  value?: string;
+}
+
 //  tasks/:taskId/photos
 
-export const uploadTaskPhoto = async (payload: UploadPhotoPayload) => {
+const getEvidenceDescription = (type: UploadPhotoPayload["type"]) =>
+  type === "before" ? "before" : type === "after" ? "after" : "evidence";
+
+const createEvidenceFileName = (rawName?: string) => {
+  const resolved = rawName || `photo_${Date.now()}`;
+  return /\.(jpe?g|png|gif|webp)$/i.test(resolved) ? resolved : `${resolved}.jpg`;
+};
+
+const uploadEvidencePhoto = async (
+  payload: UploadPhotoPayload,
+  candidates: EvidenceUploadCandidate[],
+) => {
   const rawName = payload.fileName || `photo_${Date.now()}`;
-  const fileName = /\.(jpe?g|png|gif|webp)$/i.test(rawName)
-    ? rawName
-    : `${rawName}.jpg`;
+  const fileName = createEvidenceFileName(rawName);
+  const description = getEvidenceDescription(payload.type);
+  const uniqueCandidates = candidates.filter(
+    (candidate, index, array) =>
+      !!candidate.value &&
+      array.findIndex(
+        (item) => item.key === candidate.key && item.value === candidate.value,
+      ) === index,
+  );
 
-  const description =
-    payload.type === "before"
-      ? "before"
-      : payload.type === "after"
-        ? "after"
-        : "evidence";
+  let lastError: Error | null = null;
 
-  const createUploadFormData = (fileFieldName: "file" | "files") => {
+  const createUploadFormData = (
+    fileFieldName: "file" | "files",
+    candidate: EvidenceUploadCandidate,
+  ) => {
     const formData = new FormData();
     formData.append(fileFieldName, {
       uri: payload.imageUri,
@@ -406,49 +528,70 @@ export const uploadTaskPhoto = async (payload: UploadPhotoPayload) => {
 
     formData.append("type", payload.type);
     formData.append("description", description);
-    formData.append("serviceTaskId", payload.taskId);
+    if (candidate.value) {
+      formData.append(candidate.key, candidate.value);
+    }
     return formData;
   };
 
-  const query = new URLSearchParams({
-    serviceTaskId: payload.taskId,
-    description,
-  });
+  for (const candidate of uniqueCandidates) {
+    const query = new URLSearchParams({ description });
+    query.append(candidate.key, candidate.value as string);
 
-  // Backend API collection uses POST /api/ServiceEvidences
-  // with serviceTaskId + description query params.
-  const endpoint = `/api/ServiceEvidences?${query.toString()}`;
-
-  try {
-    return await apiUpload<Task | string | number>(
-      endpoint,
-      createUploadFormData("file"),
-    );
-  } catch (firstError: any) {
-    const firstMessage = String(firstError?.message || "");
-    const shouldRetryWithFilesField =
-      firstMessage.toLowerCase().includes("at least one file is required") ||
-      firstMessage.toLowerCase().includes("file is required");
-
-    if (!shouldRetryWithFilesField) {
-      throw new Error(
-        firstError?.message ||
-          `Khong the tai anh len qua /api/ServiceEvidences cho task ${payload.taskId}`,
-      );
-    }
+    const endpoint = `/api/ServiceEvidences?${query.toString()}`;
 
     try {
       return await apiUpload<Task | string | number>(
         endpoint,
-        createUploadFormData("files"),
+        createUploadFormData("file", candidate),
       );
-    } catch (secondError: any) {
-      throw new Error(
-        secondError?.message ||
+    } catch (firstError: any) {
+      const firstMessage = String(firstError?.message || "");
+      const shouldRetryWithFilesField =
+        firstMessage.toLowerCase().includes("at least one file is required") ||
+        firstMessage.toLowerCase().includes("file is required");
+
+      if (shouldRetryWithFilesField) {
+        try {
+          return await apiUpload<Task | string | number>(
+            endpoint,
+            createUploadFormData("files", candidate),
+          );
+        } catch (secondError: any) {
+          lastError = new Error(
+            secondError?.message ||
+              `Khong the tai anh len qua /api/ServiceEvidences cho task ${payload.taskId}`,
+          );
+          continue;
+        }
+      }
+
+      lastError = new Error(
+        firstError?.message ||
           `Khong the tai anh len qua /api/ServiceEvidences cho task ${payload.taskId}`,
       );
     }
   }
+
+  throw lastError ||
+    new Error(`Khong the tai anh len qua /api/ServiceEvidences cho task ${payload.taskId}`);
+};
+
+export const uploadTaskPhoto = async (payload: UploadPhotoPayload) => {
+  return uploadEvidencePhoto(payload, [
+    { key: "serviceTaskId", value: payload.taskId },
+  ]);
+};
+
+export const uploadDeliveryTaskPhoto = async (
+  payload: UploadDeliveryPhotoPayload,
+) => {
+  return uploadEvidencePhoto(payload, [
+    { key: "shippingTaskId", value: payload.taskId },
+    { key: "serviceTaskId", value: payload.taskId },
+    { key: "soId", value: payload.orderId },
+    { key: "orderId", value: payload.orderId },
+  ]);
 };
 
 // RATINGS API

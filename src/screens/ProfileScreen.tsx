@@ -99,10 +99,15 @@ export default function ProfileScreen() {
     label: displayUser.role,
   };
 
-  const myTasks = tasks.filter((t) => t.assignedTo === displayUser.id);
+  const myTasks = tasks;
   const completed = myTasks.filter((t) => t.status === "completed").length;
   const pending = myTasks.filter((t) => t.status === "pending").length;
-  const inProgress = myTasks.filter((t) => t.status === "in_progress").length;
+  const inProgress = myTasks.filter(
+    (t) =>
+      t.status === "in_progress" ||
+      t.status === "delivering" ||
+      t.status === "arrived",
+  ).length;
 
   const handleLogout = () => {
     Alert.alert("Log out", "Are you sure you want to log out?", [

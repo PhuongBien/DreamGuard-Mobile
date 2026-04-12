@@ -36,6 +36,7 @@ export type TaskStackParamList = {
   TaskList: undefined;
   TaskDetail: { taskId: string };
   PhotoUpload: { taskId: string; photoType: "before" | "after" };
+  DeliveryPhotoCapture: { taskId: string; mode: "delivered" | "returned" };
   CheckInOut: { taskId: string };
   AddNote: { taskId: string };
 };

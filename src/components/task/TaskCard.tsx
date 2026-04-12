@@ -24,7 +24,9 @@ interface TaskCardProps {
 }
 
 export default function TaskCard({ task, onPress }: TaskCardProps) {
-  const typeConfig = TaskTypeConfig[task.type];
+  const resolvedType = task.type || 'cleaning';
+  const resolvedPriority = task.priority || 'medium';
+  const typeConfig = TaskTypeConfig[resolvedType];
 
   return (
     <TouchableOpacity
@@ -43,8 +45,8 @@ export default function TaskCard({ task, onPress }: TaskCardProps) {
         </Text>
 
         <View style={styles.badgeRow}>
-          <TaskTypeBadge type={task.type} />
-          <PriorityBadge priority={task.priority} />
+          <TaskTypeBadge type={resolvedType} />
+          <PriorityBadge priority={resolvedPriority} />
         </View>
       </View>
 

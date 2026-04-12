@@ -5,6 +5,7 @@ import {
   TaskStatus,
   TaskType,
   TaskPriority,
+  UserRole,
 } from "../types";
 import {
   fetchTasks,
@@ -23,6 +24,101 @@ const DEFAULT_PAGE_SIZE = 20;
 
 const isRecord = (value: unknown): value is Record<string, any> =>
   typeof value === "object" && value !== null;
+
+const toTrimmedString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
+
+const normalizeAssignedRole = (value?: string): UserRole | undefined => {
+  const normalized = (value ?? "").trim().toLowerCase();
+
+  if (!normalized) return undefined;
+  if (normalized.includes("delivery")) return "delivery_driver";
+  if (normalized.includes("clean")) return "cleaner";
+  if (normalized.includes("warehouse")) return "warehouse_staff";
+  if (normalized.includes("technic")) return "technician";
+  if (normalized.includes("manager")) return "manager";
+  if (normalized.includes("sale")) return "sales_staff";
+
+  return undefined;
+};
+
+const collectAssignmentKeys = (raw: Record<string, any>): string[] => {
+  const candidates = [
+    raw.staffId,
+    raw.assignedTo,
+    raw.assigneeId,
+    raw.staffName,
+    raw.assignedToName,
+    raw.staff?.staffId,
+    raw.staff?.id,
+    raw.staff?.userId,
+    raw.staff?.employeeCode,
+    raw.staff?.phone,
+    raw.staff?.phoneNumber,
+    raw.staff?.email,
+    raw.staff?.fullName,
+    raw.staff?.name,
+    raw.assignee?.staffId,
+    raw.assignee?.id,
+    raw.assignee?.userId,
+    raw.assignee?.employeeCode,
+    raw.assignee?.phone,
+    raw.assignee?.phoneNumber,
+    raw.assignee?.email,
+    raw.assignee?.fullName,
+    raw.assignee?.name,
+  ];
+
+  return candidates
+    .map((value) => toTrimmedString(value)?.toLowerCase())
+    .filter(
+      (value, index, items): value is string =>
+        !!value && items.indexOf(value) === index,
+    );
+};
+
+const pickAssignedBackendRole = (raw: Record<string, any>): string =>
+  String(
+    toTrimmedString(raw.assignedRole) ??
+      toTrimmedString(raw.staffRole) ??
+      toTrimmedString(raw.roleName) ??
+      toTrimmedString(raw.position) ??
+      toTrimmedString(raw.staff?.role) ??
+      toTrimmedString(raw.staff?.roleName) ??
+      toTrimmedString(raw.staff?.position) ??
+      toTrimmedString(raw.assignee?.role) ??
+      toTrimmedString(raw.assignee?.roleName) ??
+      toTrimmedString(raw.assignee?.position) ??
+      "",
+  );
+
+const pickAssignedStaffId = (raw: Record<string, any>): string =>
+  String(
+    toTrimmedString(raw.staffId) ??
+      toTrimmedString(raw.assignedTo) ??
+      toTrimmedString(raw.assigneeId) ??
+      toTrimmedString(raw.staff?.staffId) ??
+      toTrimmedString(raw.staff?.id) ??
+      toTrimmedString(raw.staff?.userId) ??
+      toTrimmedString(raw.assignee?.staffId) ??
+      toTrimmedString(raw.assignee?.id) ??
+      toTrimmedString(raw.assignee?.userId) ??
+      "",
+  );
+
+const pickAssignedStaffName = (raw: Record<string, any>): string =>
+  String(
+    toTrimmedString(raw.staffName) ??
+      toTrimmedString(raw.assignedToName) ??
+      toTrimmedString(raw.staff?.fullName) ??
+      toTrimmedString(raw.staff?.name) ??
+      toTrimmedString(raw.assignee?.fullName) ??
+      toTrimmedString(raw.assignee?.name) ??
+      "",
+  );
 
 const toIso = (value: unknown, fallback = new Date().toISOString()) => {
   if (!value) return fallback;
@@ -225,7 +321,6 @@ const normalizePhotoList = (
 
 const normalizeTask = (input: unknown): Task => {
   const raw = isRecord(input) ? input : {};
-  // console.log("RAW STATUS FROM API:", raw.status);
   const nowIso = new Date().toISOString();
 
   // ── Primary ID (backend uses serviceTaskId) ────────────────────────────────
@@ -380,13 +475,16 @@ const normalizeTask = (input: unknown): Task => {
     type: inferTaskType(servicePackageName || productTypeName) || "cleaning",
     status: normalizeStatus(raw.status ?? raw.taskStatus),
     priority: "medium",
-    assignedTo: String(raw.staffId ?? raw.assignedTo ?? ""),
-    assignedToName: "",
+    assignedTo: pickAssignedStaffId(raw),
+    assignedToName: pickAssignedStaffName(raw),
+    assignmentKeys: collectAssignmentKeys(raw),
+    assignedRole: normalizeAssignedRole(pickAssignedBackendRole(raw)),
+    assignedBackendRole: pickAssignedBackendRole(raw) || undefined,
     createdAt: toIso(raw.createdAt ?? nowIso, nowIso),
     updatedAt: toIso(raw.updatedAt ?? nowIso, nowIso),
     dueDate: dueSplit.dueDate || new Date().toISOString().slice(0, 10),
     dueTime: dueSplit.dueTime,
-    orderRef: raw.soId ? String(raw.soId) : undefined,
+    orderId: raw.soId ? String(raw.soId) : undefined,
     serviceOrderStatus:
       typeof raw.serviceOrderStatus === "string"
         ? raw.serviceOrderStatus
@@ -649,8 +747,6 @@ export const TaskService = {
     staffId?: string;
   }): Promise<Task[]> {
     const response = await fetchTasks(params);
-    // console.log("RAW RESPONSE:", response);
-    // console.log("PAYLOAD:", response.data ?? response);
 
     const payload = response.data ?? response;
 

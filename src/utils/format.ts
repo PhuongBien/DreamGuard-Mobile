@@ -104,8 +104,16 @@ export function getStatusLabel(status?: TaskStatus): string {
   switch (status) {
     case "pending":
       return "Pending";
+    case "delivering":
+      return "Delivering";
+    case "arrived":
+      return "Arrived";
     case "in_progress":
       return "In Progress";
+    case "delivered":
+      return "Delivered";
+    case "returned":
+      return "Returned";
     case "completed":
       return "Completed";
     case "cancelled":
@@ -122,8 +130,16 @@ export function getStatusColor(status?: TaskStatus): string {
   switch (status) {
     case "pending":
       return "#9E9E9E"; // gray
+    case "delivering":
+      return "#2563EB"; // blue
+    case "arrived":
+      return "#0284C7"; // cyan
     case "in_progress":
       return "#2196F3"; // blue
+    case "delivered":
+      return "#16A34A"; // green
+    case "returned":
+      return "#DC2626"; // red
     case "completed":
       return "#4CAF50"; // green
     case "cancelled":

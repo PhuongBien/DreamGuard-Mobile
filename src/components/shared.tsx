@@ -88,9 +88,13 @@ export function KBSButton({
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   pending: "Pending",
+  delivering: "Delivering",
+  arrived: "Arrived",
   checked_in: "Checked In",
   in_progress: "In Progress",
   checked_out: "Checked Out",
+  delivered: "Delivered",
+  returned: "Returned",
   completed: "Completed",
   cancelled: "Cancelled",
   on_hold: "On Hold",

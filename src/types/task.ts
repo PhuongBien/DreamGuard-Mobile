@@ -1,8 +1,14 @@
+import type { BackendStaffRole, UserRole } from "./user";
+
 export type TaskStatus =
   | "pending"
+  | "delivering"
+  | "arrived"
   | "checked_in"
   | "in_progress"
   | "checked_out"
+  | "delivered"
+  | "returned"
   | "completed"
   | "cancelled"
   | "on_hold";
@@ -23,12 +29,18 @@ export type TaskType =
 
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 
+export type DeliveryEvidenceStage =
+  | "start_delivery"
+  | "delivery_success"
+  | "delivery_failed";
+
 export interface TaskPhoto {
   id: string;
   url: string;
   type: "before" | "after" | "evidence";
   uploadedAt: string;
   uploadedBy: string;
+  captureStage?: DeliveryEvidenceStage;
 }
 
 export interface TaskNote {
@@ -58,6 +70,13 @@ export interface CheckOutInfo {
 export interface TaskCheckInOut {
   checkIn?: CheckInInfo;
   checkOut?: CheckOutInfo;
+}
+
+export interface DeliveryTimeline {
+  deliveringAt?: string;
+  arrivedAt?: string;
+  deliveredAt?: string;
+  returnedAt?: string;
 }
 
 export interface CustomerInfo {
@@ -112,22 +131,25 @@ export interface Task {
   title: string;
   description: string;
 
-type?: TaskType;
+  type?: TaskType;
   status: TaskStatus;
-priority?: TaskPriority;
+  priority?: TaskPriority;
 
-assignedTo?: string;
-assignedToName?: string;
+  assignedTo?: string;
+  assignedToName?: string;
+  assignmentKeys?: string[];
+  assignedRole?: UserRole;
+  assignedBackendRole?: BackendStaffRole;
 
-createdAt?: string;
-updatedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 
   dueDate: string;
   dueTime?: string;
 
   estimatedDuration?: number;
 
-  orderRef?: string;
+  orderId?: string;
   tags?: string[];
   serviceOrderStatus?: string;
   paymentMethod?: string;
@@ -137,12 +159,13 @@ updatedAt?: string;
   appointmentDateRaw?: string;
 
   customer: CustomerInfo;
-products?: ProductItem[];
+  products?: ProductItem[];
   servicePackageMapping?: ServicePackageMapping;
 
-photos?: TaskPhoto[];
+  photos?: TaskPhoto[];
   notes?: TaskNote[];
   checkInOut?: TaskCheckInOut;
+  deliveryTimeline?: DeliveryTimeline;
 
   rating?: {
     id?: string;
@@ -151,6 +174,9 @@ photos?: TaskPhoto[];
     customerName?: string | null;
     createdAt?: string | null;
   } | null;
+
+  deliveryFailureReason?: string;
+  relatedImageUrls?: string[];
 
   isSynced?: boolean;
 }

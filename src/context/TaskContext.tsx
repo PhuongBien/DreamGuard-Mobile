@@ -4,11 +4,13 @@ import React, {
   useEffect,
   useCallback,
   useState,
+  useRef,
   ReactNode,
 } from "react";
 
 import { Task, TaskStatus, TaskNote, TaskPhoto } from "../types";
 import { TaskService } from "../services/task.service";
+import { DeliveryTaskService } from "../services/delivery-task.service";
 import { useAuth } from "./AuthContext";
 
 const isGuid = (value?: string) =>
@@ -36,6 +38,20 @@ const mapStatus = (status: string): TaskStatus => {
     default:
       return "pending";
   }
+};
+
+const normalizeRoleKey = (value?: string) => {
+  const normalized = value?.trim().toLowerCase() || "";
+
+  if (!normalized) return "";
+  if (normalized.includes("delivery")) return "delivery_driver";
+  if (normalized.includes("clean")) return "cleaner";
+  if (normalized.includes("warehouse")) return "warehouse_staff";
+  if (normalized.includes("technic")) return "technician";
+  if (normalized.includes("manager")) return "manager";
+  if (normalized.includes("sale")) return "sales_staff";
+
+  return normalized;
 };
 
 // const mapTaskFromApi = (item: any): Task => {
@@ -135,12 +151,20 @@ export interface TaskContextType {
       fileName?: string;
       mimeType?: string;
     },
-  ) => Promise<void>;
+  ) => Promise<string>;
 
   checkIn: (taskId: string) => Promise<void>;
   checkOut: (taskId: string, note?: string) => Promise<void>;
   startProcessing: (taskId: string) => Promise<void>;
   completeTask: (taskId: string) => Promise<void>;
+  startDelivery: (taskId: string, evidenceUrls?: string[]) => Promise<void>;
+  markArrived: (taskId: string) => Promise<void>;
+  markDelivered: (taskId: string, evidenceUrls: string[]) => Promise<void>;
+  markReturned: (
+    taskId: string,
+    reason: string,
+    evidenceUrls: string[],
+  ) => Promise<void>;
 }
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -149,91 +173,264 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
+  const isDeliveryStaff = user?.role === "delivery_driver";
+  const authScopeKey = `${user?.id || "guest"}:${user?.userId || ""}:${user?.role || "guest"}`;
+  const activeScopeRef = useRef(authScopeKey);
+  const tasksRef = useRef<Task[]>([]);
 
-  const refreshTasks = useCallback(async (params?: {
-    status?: TaskStatus | "all";
-    date?: string;
-    search?: string;
-  }) => {
+  const normalizeOwnershipKey = (value?: string) =>
+    value?.trim().toLowerCase() || "";
+
+  const getCurrentUserOwnershipKeys = useCallback(() => {
+    if (!user) return [] as string[];
+
+    return [
+      user.id,
+      user.userId,
+      user.phone,
+      user.phoneNumber,
+      user.employeeCode,
+      user.email,
+      user.name,
+      user.fullName,
+    ]
+      .map((value) => normalizeOwnershipKey(value))
+      .filter(
+        (value, index, array) => !!value && array.indexOf(value) === index,
+      );
+  }, [user]);
+
+  const getCurrentUserRoleKeys = useCallback(() => {
+    if (!user) return [] as string[];
+
+    return [user.role, user.backendRole, user.position]
+      .map((value) => normalizeRoleKey(value))
+      .filter(
+        (value, index, array) => !!value && array.indexOf(value) === index,
+      );
+  }, [user]);
+
+  const isTaskAllowedForRole = useCallback(
+    (task?: Task) => {
+      if (!task || !user) return false;
+
+      const requiredRoleKeys = [task.assignedRole, task.assignedBackendRole]
+        .map((value) => normalizeRoleKey(value))
+        .filter(Boolean);
+
+      if (requiredRoleKeys.length > 0) {
+        const currentUserRoleKeys = getCurrentUserRoleKeys();
+        return requiredRoleKeys.some((value) =>
+          currentUserRoleKeys.includes(value),
+        );
+      }
+
+      if (task.type === "delivery") {
+        return user.role === "delivery_driver";
+      }
+
+      return user.role !== "delivery_driver";
+    },
+    [getCurrentUserRoleKeys, user],
+  );
+
+  const isOwnedTask = useCallback(
+    (task?: Task) => {
+      if (!task || !user) return false;
+
+      if (!isTaskAllowedForRole(task)) {
+        return false;
+      }
+
+      const ownerCandidates = [
+        ...(task.assignmentKeys || []),
+        task.assignedTo,
+        task.assignedToName,
+      ]
+        .map((value) => normalizeOwnershipKey(value))
+        .filter(Boolean);
+
+      if (!ownerCandidates.length) {
+        if (task.type === "delivery" && user.role === "delivery_driver") {
+          return true;
+        }
+
+        return false;
+      }
+
+      const currentUserKeys = getCurrentUserOwnershipKeys();
+      return ownerCandidates.some((value) => currentUserKeys.includes(value));
+    },
+    [getCurrentUserOwnershipKeys, isTaskAllowedForRole, user],
+  );
+
+  const filterOwnedTasks = useCallback(
+    (items: Task[]) => items.filter((task) => isOwnedTask(task)),
+    [isOwnedTask],
+  );
+
+  const setTasksState = useCallback(
+    (nextTasks: Task[] | ((prev: Task[]) => Task[])) => {
+      setTasks((prev) => {
+        const resolved =
+          typeof nextTasks === "function"
+            ? (nextTasks as (prev: Task[]) => Task[])(prev)
+            : nextTasks;
+        tasksRef.current = resolved;
+        return resolved;
+      });
+    },
+    [],
+  );
+
+  const mergeTaskWithExisting = useCallback((incomingTask: Task) => {
+    const existing = tasksRef.current.find(
+      (task) => task.id === incomingTask.id,
+    );
+
+    if (!existing) {
+      return incomingTask;
+    }
+
+    return {
+      ...incomingTask,
+      photos: mergePhotos(existing.photos || [], incomingTask.photos || []),
+      relatedImageUrls: mergeImageUrls(
+        existing.relatedImageUrls || [],
+        incomingTask.relatedImageUrls || [],
+      ),
+    };
+  }, []);
+
+  useEffect(() => {
+    activeScopeRef.current = authScopeKey;
+    tasksRef.current = [];
+    setTasksState([]);
+    setLoading(false);
+  }, [authScopeKey, setTasksState]);
+
+  const refreshTasks = useCallback(
+    async (params?: {
+      status?: TaskStatus | "all";
+      date?: string;
+      search?: string;
+    }) => {
+      const requestScopeKey = authScopeKey;
+
+      if (!user) {
+        setTasksState([]);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        if (isDeliveryStaff) {
+          const data = await DeliveryTaskService.getTasks({
+            page: 1,
+            pageSize: 20,
+            status: params?.status,
+            date: params?.date,
+            search: params?.search,
+          });
+          if (activeScopeRef.current === requestScopeKey) {
+            setTasksState(filterOwnedTasks(data).map(mergeTaskWithExisting));
+          }
+          return;
+        }
+
+        // 1) Preferred: backend identifies staff from access token.
+        const requestParams = {
+          page: 1,
+          pageSize: 20,
+          status: params?.status,
+          date: params?.date,
+          search: params?.search,
+        };
+
+        let data = await TaskService.getTasks(requestParams);
+        if (__DEV__) {
+        }
+
+        // 2) Fallback: some deployments still require explicit staffId.
+        if (data.length === 0) {
+          const candidateIds = [user.id, user.userId]
+            .filter(
+              (value, idx, arr): value is string =>
+                !!value && arr.indexOf(value) === idx,
+            )
+            .filter((value) => isGuid(value));
+
+          for (const staffId of candidateIds) {
+            data = await TaskService.getTasks({
+              ...requestParams,
+              staffId,
+            });
+            if (__DEV__) {
+              console.log(
+                "[TaskContext] fetch by staffId",
+                staffId,
+                "->",
+                data.length,
+              );
+            }
+
+            if (data.length > 0) {
+              break;
+            }
+          }
+        }
+
+        const fullTasks = await Promise.all(
+          data.map(async (task) => {
+            const detail = await TaskService.getTaskById(task.id);
+
+            if (detail) {
+              return {
+                ...task,
+                ...detail,
+              };
+            }
+
+            return task;
+          }),
+        );
+
+        if (activeScopeRef.current === requestScopeKey) {
+          setTasksState(filterOwnedTasks(fullTasks).map(mergeTaskWithExisting));
+        }
+      } catch (err) {
+        console.log("Load tasks error:", err);
+      } finally {
+        if (activeScopeRef.current === requestScopeKey) {
+          setLoading(false);
+        }
+      }
+    },
+    [
+      authScopeKey,
+      filterOwnedTasks,
+      isDeliveryStaff,
+      mergeTaskWithExisting,
+      setTasksState,
+      user,
+    ],
+  );
+
+  useEffect(() => {
     if (!user) {
-      setTasks([]);
       return;
     }
 
-    setLoading(true);
-    try {
-      // 1) Preferred: backend identifies staff from access token.
-      const requestParams = {
-        page: 1,
-        pageSize: 20,
-        status: params?.status,
-        date: params?.date,
-        search: params?.search,
-      };
-
-      let data = await TaskService.getTasks(requestParams);
-      if (__DEV__) {
-        // console.log("[TaskContext] fetch by token ->", data.length);
-      }
-
-      // 2) Fallback: some deployments still require explicit staffId.
-      if (data.length === 0) {
-        const candidateIds = [user.id, user.userId]
-          .filter(
-            (value, idx, arr): value is string =>
-              !!value && arr.indexOf(value) === idx,
-          )
-          .filter((value) => isGuid(value));
-
-        for (const staffId of candidateIds) {
-          data = await TaskService.getTasks({
-            ...requestParams,
-            staffId,
-          });
-          if (__DEV__) {
-            console.log(
-              "[TaskContext] fetch by staffId",
-              staffId,
-              "->",
-              data.length,
-            );
-          }
-
-          if (data.length > 0) {
-            break;
-          }
-        }
-      }
-
-      const fullTasks = await Promise.all(
-  data.map(async (task) => {
-    const detail = await TaskService.getTaskById(task.id);
-
-    if (detail) {
-      return {
-        ...task,
-        ...detail,
-      };
-    }
-
-    return task;
-  })
-);
-
-      setTasks(fullTasks);
-    } catch (err) {
-      console.log("Load tasks error:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
     refreshTasks();
-  }, [refreshTasks]);
+  }, [authScopeKey]);
 
   const updateLocalTask = (updated: Task) => {
-    setTasks((prev) => {
+    if (!isOwnedTask(updated)) {
+      setTasksState((prev) => prev.filter((task) => task.id !== updated.id));
+      return;
+    }
+
+    setTasksState((prev) => {
       const exists = prev.some((t) => t.id === updated.id);
       if (!exists) {
         return [updated, ...prev];
@@ -247,32 +444,104 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
     taskId: string,
     options?: { forceRefresh?: boolean },
   ) => {
+    const requestScopeKey = activeScopeRef.current;
     const forceRefresh = !!options?.forceRefresh;
-    const existing = tasks.find((t) => t.id === taskId);
-    if (existing && !forceRefresh) return existing;
+    const existing = tasksRef.current.find((t) => t.id === taskId);
+    if (existing && !forceRefresh) {
+      if (isOwnedTask(existing)) {
+        return existing;
+      }
+
+      setTasksState((prev) => prev.filter((item) => item.id !== taskId));
+    }
+
+    if (isDeliveryStaff) {
+      const task = await DeliveryTaskService.getTaskById(taskId);
+      
+      const mappedTask = task
+        ? {
+            ...task,
+            evidenceUrls: (task as any).evidences || [], // ✅ FIX Ở ĐÂY
+          }
+        : task;
+      if (activeScopeRef.current !== requestScopeKey) {
+        return undefined;
+      }
+
+      if (task && isOwnedTask(task)) {
+        const mergedTask: Task = existing
+          ? {
+              ...task,
+              photos: mergePhotos(existing.photos || [], task.photos || []),
+              relatedImageUrls: mergeImageUrls(
+                existing.relatedImageUrls || [],
+                task.relatedImageUrls || [],
+              ),
+            }
+          : task;
+
+        updateLocalTask(mergedTask);
+        return mergedTask;
+      }
+
+      setTasksState((prev) => prev.filter((item) => item.id !== taskId));
+
+      return undefined;
+    }
 
     const task = await TaskService.getTaskById(taskId);
-    if (task) {
+    if (activeScopeRef.current !== requestScopeKey) {
+      return undefined;
+    }
+
+    if (task && isOwnedTask(task)) {
       // Keep optimistic local photos when backend is eventually consistent.
       const mergedTask: Task = existing
         ? {
             ...task,
             photos: mergePhotos(existing.photos || [], task.photos || []),
+            relatedImageUrls: mergeImageUrls(
+              existing.relatedImageUrls || [],
+              task.relatedImageUrls || [],
+            ),
           }
         : task;
 
       updateLocalTask(mergedTask);
       return mergedTask;
     }
+
+    setTasksState((prev) => prev.filter((item) => item.id !== taskId));
     return undefined;
   };
 
   const updateTaskStatus = async (taskId: string, status: TaskStatus) => {
+    if (isDeliveryStaff) {
+      let updated: Task;
+
+      if (status === "delivering") {
+        updated = await DeliveryTaskService.startDelivery(taskId);
+      } else if (status === "arrived") {
+        updated = await DeliveryTaskService.markArrived(taskId);
+      } else {
+        throw new Error("Unsupported delivery status update");
+      }
+
+      updateLocalTask(updated);
+      return;
+    }
+
     const updated = await TaskService.updateStatus(taskId, status);
     updateLocalTask(updated);
   };
 
   const addTaskNote = async (taskId: string, content: string) => {
+    if (isDeliveryStaff) {
+      throw new Error(
+        "Delivery staff note editing is not enabled in this flow",
+      );
+    }
+
     const note: TaskNote = {
       id: `note_${Date.now()}`,
       content,
@@ -292,6 +561,47 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
       mimeType?: string;
     },
   ) => {
+    if (isDeliveryStaff) {
+      const existing = tasksRef.current.find((task) => task.id === taskId);
+
+      if (!existing) {
+        throw new Error("Task not found");
+      }
+
+      const photo: TaskPhoto & {
+        fileName?: string;
+        mimeType?: string;
+      } = {
+        id: `photo_${Date.now()}`,
+        url: photoData.url,
+        type: photoData.type,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: photoData.uploadedBy,
+        captureStage: photoData.captureStage,
+        fileName: photoData.fileName,
+        mimeType: photoData.mimeType,
+      };
+
+      const uploadedUrl = await DeliveryTaskService.addPhoto(existing, photo);
+      const uploadedPhoto: TaskPhoto = {
+        ...photo,
+        url: uploadedUrl,
+      };
+
+      updateLocalTask({
+        ...existing,
+        photos: mergePhotos(
+          [uploadedPhoto, ...(existing.photos || [])],
+          existing.photos || [],
+        ),
+        relatedImageUrls: mergeImageUrls(
+          [uploadedUrl, ...(existing.relatedImageUrls || [])],
+          existing.relatedImageUrls || [],
+        ),
+      });
+      return uploadedUrl;
+    }
+
     const photo: TaskPhoto & {
       fileName?: string;
       mimeType?: string;
@@ -311,7 +621,7 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
 
     if (hasUploadedPhoto) {
       updateLocalTask(updated);
-      return;
+      return photo.url;
     }
 
     const merged: Task = {
@@ -329,26 +639,128 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
     };
 
     updateLocalTask(merged);
+    return photo.url;
   };
 
   const checkIn = async (taskId: string) => {
+    if (isDeliveryStaff) {
+      throw new Error("Check-in is not used for delivery tasks");
+    }
+
     const updated = await TaskService.checkIn(taskId);
     updateLocalTask(updated);
   };
 
   const checkOut = async (taskId: string, note?: string) => {
+    if (isDeliveryStaff) {
+      throw new Error("Check-out is not used for delivery tasks");
+    }
+
     const updated = await TaskService.checkOut(taskId, note);
     updateLocalTask(updated);
   };
 
   const startProcessing = async (taskId: string) => {
+    if (isDeliveryStaff) {
+      throw new Error("Processing flow is not used for delivery tasks");
+    }
+
     const updated = await TaskService.startProcessing(taskId);
     updateLocalTask(updated);
   };
 
   const completeTask = async (taskId: string) => {
+    if (isDeliveryStaff) {
+      throw new Error("Complete action is not used for delivery tasks");
+    }
+
     const updated = await TaskService.completeTask(taskId);
     updateLocalTask(updated);
+  };
+
+  const startDelivery = async (taskId: string, evidenceUrls: string[] = []) => {
+    
+    const existing = tasksRef.current.find((task) => task.id === taskId);
+    const updated = await DeliveryTaskService.startDelivery(
+      taskId,
+      evidenceUrls,
+    );
+
+    if (existing) {
+      updateLocalTask({
+        ...updated,
+        photos: mergePhotos(existing.photos || [], updated.photos || []),
+        relatedImageUrls: mergeImageUrls(
+          existing.relatedImageUrls || [],
+          updated.relatedImageUrls || [],
+        ),
+      });
+      return;
+    }
+
+    updateLocalTask(updated);
+  };
+
+  const markArrived = async (taskId: string) => {
+    const existing = tasksRef.current.find((task) => task.id === taskId);
+    const updated = await DeliveryTaskService.markArrived(taskId);
+    updateLocalTask(
+      existing
+        ? {
+            ...updated,
+            photos: mergePhotos(existing.photos || [], updated.photos || []),
+            relatedImageUrls: mergeImageUrls(
+              existing.relatedImageUrls || [],
+              updated.relatedImageUrls || [],
+            ),
+          }
+        : updated,
+    );
+  };
+
+  const markDelivered = async (taskId: string, evidenceUrls: string[]) => {
+    const existing = tasksRef.current.find((task) => task.id === taskId);
+    const updated = await DeliveryTaskService.markDelivered(
+      taskId,
+      evidenceUrls,
+    );
+    updateLocalTask(
+      existing
+        ? {
+            ...updated,
+            photos: mergePhotos(existing.photos || [], updated.photos || []),
+            relatedImageUrls: mergeImageUrls(
+              existing.relatedImageUrls || [],
+              updated.relatedImageUrls || [],
+            ),
+          }
+        : updated,
+    );
+  };
+
+  const markReturned = async (
+    taskId: string,
+    reason: string,
+    evidenceUrls: string[],
+  ) => {
+    const existing = tasksRef.current.find((task) => task.id === taskId);
+    const updated = await DeliveryTaskService.markReturned(
+      taskId,
+      reason,
+      evidenceUrls,
+    );
+    updateLocalTask(
+      existing
+        ? {
+            ...updated,
+            photos: mergePhotos(existing.photos || [], updated.photos || []),
+            relatedImageUrls: mergeImageUrls(
+              existing.relatedImageUrls || [],
+              updated.relatedImageUrls || [],
+            ),
+          }
+        : updated,
+    );
   };
 
   return (
@@ -365,6 +777,10 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
         checkOut,
         startProcessing,
         completeTask,
+        startDelivery,
+        markArrived,
+        markDelivered,
+        markReturned,
       }}
     >
       {children}
@@ -390,10 +806,23 @@ function mergePhotos(localPhotos: TaskPhoto[], remotePhotos: TaskPhoto[]) {
 
   for (const photo of localPhotos) {
     if (!photo.url) continue;
-    if (!byUrl.has(photo.url)) {
+    const existing = byUrl.get(photo.url);
+    if (!existing) {
       byUrl.set(photo.url, photo);
+      continue;
     }
+
+    byUrl.set(photo.url, {
+      ...existing,
+      captureStage: existing.captureStage || photo.captureStage,
+      uploadedBy: existing.uploadedBy || photo.uploadedBy,
+      uploadedAt: existing.uploadedAt || photo.uploadedAt,
+    });
   }
 
   return Array.from(byUrl.values());
+}
+
+function mergeImageUrls(localUrls: string[], remoteUrls: string[]) {
+  return Array.from(new Set([...remoteUrls, ...localUrls].filter(Boolean)));
 }

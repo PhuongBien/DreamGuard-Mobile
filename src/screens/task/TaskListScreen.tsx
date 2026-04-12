@@ -20,7 +20,6 @@ import {
   Colors,
   Typography,
   Spacing,
-  BorderRadius,
   Shadow,
   TaskTypeConfig,
 } from "../../constants/theme";
@@ -39,6 +38,10 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   completed: "Completed",
   cancelled: "Cancelled",
   on_hold: "On Hold",
+  delivering: "Delivering",
+  arrived: "Arrived",
+  delivered: "Delivered",
+  returned: "Returned",
 };
 
 const STATUS_BADGES: Record<TaskStatus, { bg: string; text: string }> = {
@@ -49,6 +52,10 @@ const STATUS_BADGES: Record<TaskStatus, { bg: string; text: string }> = {
   completed: { bg: "#DDF4E6", text: "#2C8B52" },
   cancelled: { bg: "#FCE2E2", text: "#B43B3B" },
   on_hold: { bg: "#ECEEF2", text: "#66748A" },
+  delivering: { bg: "#DBEAFE", text: "#1D4ED8" },
+  arrived: { bg: "#E0F2FE", text: "#0369A1" },
+  delivered: { bg: "#DCFCE7", text: "#166534" },
+  returned: { bg: "#FEE2E2", text: "#B91C1C" },
 };
 
 const STATUS_FILTERS: Array<{ value: TaskFilter; label: string }> = [
@@ -116,9 +123,6 @@ export default function TaskListScreen({ navigation }: Props) {
   );
 
   const renderTask = ({ item }: { item: Task }) => {
-    //     console.log("ITEM:", item);
-    // console.log("TYPE:", item.type);
-    // console.log("TYPE CONFIG:", item.type ? TaskTypeConfig[item.type] : undefined);
     const type = item.type || "cleaning";
     const typeConfig = TaskTypeConfig[type];
     const typeLabel = typeConfig?.label || type;
@@ -212,25 +216,6 @@ export default function TaskListScreen({ navigation }: Props) {
             </Text>
           </View>
         </View>
-
-        {/* <View style={styles.statsRow}>
-          <StatItem
-            label="Total Tasks"
-            value={stats.total}
-            icon="clipboard-outline"
-          />
-          <StatItem
-            label="Completed"
-            value={stats.done}
-            icon="checkmark-circle-outline"
-          />
-          <StatItem label="In Progress" value={stats.doing} icon="time-outline" />
-          <StatItem
-            label="High Priority"
-            value={stats.high}
-            icon="alert-outline"
-          />
-        </View> */}
       </View>
 
       <View style={styles.sectionHeader}>

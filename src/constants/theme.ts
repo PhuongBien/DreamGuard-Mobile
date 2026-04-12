@@ -43,9 +43,13 @@ export const Colors = {
   // Status badge colors
   status: {
     pending:     { bg: '#FEF3C7', text: '#92400E', dot: '#F59E0B' },
+    delivering:  { bg: '#DBEAFE', text: '#1E40AF', dot: '#3B82F6' },
+    arrived:     { bg: '#E0F2FE', text: '#0C4A6E', dot: '#0284C7' },
     checked_in:  { bg: '#DBEAFE', text: '#1E3A8A', dot: '#3B82F6' },
     in_progress: { bg: '#BDE8F5', text: '#0F2854', dot: '#4988C4' },
     checked_out: { bg: "#E0F2FE", text: "#0284C7", dot: "#0284C7"},
+    delivered:   { bg: '#DCFCE7', text: '#166534', dot: '#16A34A' },
+    returned:    { bg: '#FEE2E2', text: '#991B1B', dot: '#DC2626' },
     completed:   { bg: '#DCFCE7', text: '#14532D', dot: '#22C55E' },
     cancelled:   { bg: '#FEE2E2', text: '#7F1D1D', dot: '#EF4444' },
     on_hold:     { bg: '#E2E8F0', text: '#334155', dot: '#94A3B8' },

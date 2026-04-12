@@ -4,6 +4,7 @@ import {
   // authForgotPassword,
   // authResetPassword,
   authLogout,
+  fetchStaffProfile,
   fetchStaffs,
   AuthLoginPayload,
   // AuthForgotPayload,
@@ -308,10 +309,18 @@ export const loginService = async (
     user.id = resolvedUserId;
   }
 
+  let resolvedUser = user;
+
+  try {
+    resolvedUser = await getStaffProfileService(user);
+  } catch {
+    resolvedUser = user;
+  }
+
   return {
     token,
     refreshToken,
-    user,
+    user: resolvedUser,
   };
 };
 
@@ -350,6 +359,22 @@ export const logoutService = async () => {
 };
 
 export const getStaffProfileService = async (currentUser: User): Promise<User> => {
+  try {
+    const profileResponse = await fetchStaffProfile();
+
+    if (profileResponse.success && profileResponse.data) {
+      const directProfile = Array.isArray(profileResponse.data)
+        ? profileResponse.data[0]
+        : profileResponse.data;
+
+      if (directProfile && typeof directProfile === "object") {
+        return toNormalizedUserFromStaff(directProfile, currentUser);
+      }
+    }
+  } catch {
+    // Some roles may not be allowed to read the dedicated profile endpoint.
+  }
+
   const response = await fetchStaffs({ pageNumber: 1, pageSize: 200 });
 
   if (!response.success) {
@@ -359,6 +384,6 @@ export const getStaffProfileService = async (currentUser: User): Promise<User> =
   const candidates = pickStaffCandidates(response.data);
   if (!candidates.length) return currentUser;
 
-  const matched = findMatchingStaff(candidates, currentUser) || candidates[0];
-  return toNormalizedUserFromStaff(matched, currentUser);
+  const matched = findMatchingStaff(candidates, currentUser);
+  return matched ? toNormalizedUserFromStaff(matched, currentUser) : currentUser;
 };

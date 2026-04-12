@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -19,7 +19,6 @@ import {
   Colors,
   Typography,
   Spacing,
-  BorderRadius,
   Shadow,
 } from "../../constants/theme";
 import { TaskStackParamList } from "../../types/navigation";
@@ -40,6 +39,10 @@ const STATUS_TEXT: Record<TaskStatus, string> = {
   completed: "Completed",
   cancelled: "Cancelled",
   on_hold: "On Hold",
+  delivering: "Delivering",
+  arrived: "Arrived",
+  delivered: "Delivered",
+  returned: "Returned",
 };
 
 const NEXT_STATUSES: Record<TaskStatus, TaskStatus[]> = {
@@ -50,6 +53,10 @@ const NEXT_STATUSES: Record<TaskStatus, TaskStatus[]> = {
   checked_out: ["completed"],
   completed: [],
   cancelled: [],
+  delivering: [],
+  arrived: [],
+  delivered: [],
+  returned: [],
 };
 
 const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string }> = {
@@ -60,11 +67,16 @@ const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string }> = {
   completed: { bg: "#7BCB8F", text: Colors.white },
   cancelled: { bg: "#E48787", text: Colors.white },
   on_hold: { bg: "#A6B1C6", text: Colors.white },
+  delivering: { bg: "#DBEAFE", text: "#1D4ED8" },
+  arrived: { bg: "#E0F2FE", text: "#0369A1" },
+  delivered: { bg: "#DCFCE7", text: "#166534" },
+  returned: { bg: "#FEE2E2", text: "#B91C1C" },
 };
 
 export default function TaskDetailScreen({ route, navigation }: Props) {
   const { taskId } = route.params;
   const { user } = useAuth();
+  const canViewTaskRating = user?.role === "cleaner";
   const {
     tasks,
     getTaskById,
@@ -83,33 +95,29 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const [taskRating, setTaskRating] = useState<Rating | null>(null);
 
   useEffect(() => {
-  let mounted = true;
+    let mounted = true;
 
-  const loadTaskDetail = async () => {
-    if (task) {
-      // console.log("DETAIL STATUS (FROM LIST):", task.status);
-      return;
-    }
-
-    try {
-      setDetailLoading(true);
-      const detail = await getTaskById(taskId);
-
-      // console.log("DETAIL STATUS (FROM API):", detail?.status);
-
-    } finally {
-      if (mounted) {
-        setDetailLoading(false);
+    const loadTaskDetail = async () => {
+      if (task) {
+        return;
       }
-    }
-  };
 
-  loadTaskDetail();
+      try {
+        setDetailLoading(true);
+        await getTaskById(taskId);
+      } finally {
+        if (mounted) {
+          setDetailLoading(false);
+        }
+      }
+    };
 
-  return () => {
-    mounted = false;
-  };
-}, [task, taskId, getTaskById]);
+    loadTaskDetail();
+
+    return () => {
+      mounted = false;
+    };
+  }, [task, taskId, getTaskById]);
 
   useFocusEffect(
     useCallback(() => {
@@ -149,12 +157,11 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       });
 
     const loadRating = async () => {
-      if (!user?.id) {
+      if (!canViewTaskRating || !user?.id) {
         setTaskRating(null);
         return;
       }
 
-      // Always ensure we have a fresh detail snapshot so first open is consistent.
       const baseTask =
         task || (await getTaskById(taskId, { forceRefresh: true }));
 
@@ -173,7 +180,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         return;
       }
 
-      const orderKeys = [baseTask.orderRef, baseTask.taskCode, baseTask.id]
+      const orderKeys = [baseTask.orderId, baseTask.taskCode, baseTask.id]
         .map((value) => normalizeKey(value))
         .filter(Boolean);
 
@@ -253,7 +260,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [taskId, task, user?.id, getTaskById]);
+  }, [canViewTaskRating, taskId, task, user?.id, getTaskById]);
 
   if (!task) {
     return (
@@ -293,8 +300,6 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const displayAddress =
     formatVietnamAddress(task.customer.address) || "No address available";
 
-  // Handle primary action based on current status flow:
-  // pending → checkIn (CheckedIn) → startProcessing (Processing) → checkOut (CheckedOut) → completeTask (Completed)
   const handlePrimaryAction = async () => {
     try {
       setStatusLoading(true);
@@ -513,28 +518,6 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                 </Text>
               </View>
             )}
-
-            {/* {!!packageInfo?.benefits && (
-              <View style={styles.serviceBlock}>
-                <Text style={styles.serviceLabel}>Benefits</Text>
-                {packageInfo.benefits.split("\n").map((line, idx) => (
-                  <Text key={`benefit_${idx}`} style={styles.serviceBullet}>
-                    • {line.trim()}
-                  </Text>
-                ))}
-              </View>
-            )} */}
-
-            {/* {!!packageInfo?.imageUrl && (
-              <View style={styles.serviceBlock}>
-                <Text style={styles.serviceLabel}>Service Package Image</Text>
-                <Image
-                  source={{ uri: packageInfo.imageUrl }}
-                  style={styles.serviceImage}
-                  resizeMode="cover"
-                />
-              </View>
-            )} */}
           </View>
         )}
 
@@ -608,7 +591,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           </View>
         </View>
 
-        {!!taskRating && (
+        {canViewTaskRating && !!taskRating && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>RATING</Text>
 
@@ -674,11 +657,11 @@ function getActionLabel(status: TaskStatus): string {
     case "pending":
       return "Check-in";
     case "checked_in":
-      return "Nh\u1eadn vi\u1ec7c / B\u1eaft \u0111\u1ea7u";
+      return "Nhận việc / Bắt đầu";
     case "in_progress":
       return "Check-out";
     case "checked_out":
-      return "Ho\u00e0n th\u00e0nh";
+      return "Hoàn thành";
     default:
       return "";
   }

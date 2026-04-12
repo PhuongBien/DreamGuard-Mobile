@@ -56,7 +56,7 @@ const toKey = (value?: string | null): string =>
 const mergeTaskNamesIntoMap = (
   map: Map<string, string>,
   sourceTasks: Array<{
-    orderRef?: string;
+    orderId?: string;
     taskCode?: string;
     customer?: { id?: string; name?: string };
   }>,
@@ -66,7 +66,7 @@ const mergeTaskNamesIntoMap = (
     if (!name) return;
 
     const keys = [
-      toKey(task.orderRef),
+      toKey(task.orderId),
       toKey(task.taskCode),
       toKey(task.customer?.id),
     ].filter(Boolean);
@@ -288,9 +288,9 @@ export default function RatingsScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const customerNameByOrderRefRef = useRef<Map<string, string>>(new Map());
+  const customerNameByorderIdRef = useRef<Map<string, string>>(new Map());
 
-  const customerNameByOrderRef = useMemo(() => {
+  const customerNameByorderId = useMemo(() => {
     const map = new Map<string, string>();
     mergeTaskNamesIntoMap(map, tasks);
 
@@ -298,8 +298,8 @@ export default function RatingsScreen() {
   }, [tasks]);
 
   useEffect(() => {
-    customerNameByOrderRefRef.current = customerNameByOrderRef;
-  }, [customerNameByOrderRef]);
+    customerNameByorderIdRef.current = customerNameByorderId;
+  }, [customerNameByorderId]);
 
   const loadRatings = useCallback(
     async (silent = false) => {
@@ -309,7 +309,7 @@ export default function RatingsScreen() {
       try {
         const response = await getRatingsByStaffId(user.id);
         const extracted = extractRatingItems(response.data);
-        const currentCustomerMap = customerNameByOrderRefRef.current;
+        const currentCustomerMap = customerNameByorderIdRef.current;
 
         const localEnriched = extracted.map((item) => {
           const localFallbackName =

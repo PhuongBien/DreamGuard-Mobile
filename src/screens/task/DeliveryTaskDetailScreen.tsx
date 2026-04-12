@@ -1,0 +1,1316 @@
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useFocusEffect } from "@react-navigation/native";
+import * as ImagePicker from "expo-image-picker";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+
+import { useTask } from "../../context/TaskContext";
+import { Task, TaskStatus } from "../../types";
+import { TaskStackParamList } from "../../types/navigation";
+import {
+  BorderRadius,
+  Colors,
+  Shadow,
+  Spacing,
+  Typography,
+} from "../../constants/theme";
+import { fetchPaymentByOrderId } from "../../utils/api";
+import { formatDate } from "../../utils/date";
+import { uploadImageToCloudinary } from "../../utils/cloudinary";
+
+type Props = NativeStackScreenProps<TaskStackParamList, "TaskDetail">;
+
+const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
+  pending: "Pending",
+  delivering: "Delivering",
+  arrived: "Arrived",
+  delivered: "Delivered",
+  returned: "Returned",
+  checked_in: "Checked In",
+  in_progress: "In Progress",
+  checked_out: "Checked Out",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  on_hold: "On Hold",
+};
+
+const DELIVERY_IMAGE_GROUP_LABELS = {
+  start_delivery: "Captured Before Start Delivery",
+  delivery_success: "Captured For Successful Delivery",
+  delivery_failed: "Captured For Failed Delivery",
+  other: "Other Related Images",
+} as const;
+
+type PaymentInfo = {
+  paymentMethod?: string;
+  paymentStatus?: string;
+};
+
+const isRecord = (value: unknown): value is Record<string, any> =>
+  typeof value === "object" && value !== null;
+
+const toTrimmedString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
+
+// const extractPaymentInfo = (payload: unknown): PaymentInfo => {
+//   const source = isRecord(payload)
+//     ? isRecord(payload.data)
+//       ? payload.data
+//       : payload
+//     : {};
+
+//   const candidates = [
+//     source,
+//     isRecord(source.payment) ? source.payment : null,
+//     isRecord(source.orderPayment) ? source.orderPayment : null,
+//     Array.isArray(source.items) && isRecord(source.items[0])
+//       ? source.items[0]
+//       : null,
+//     Array.isArray(source.results) && isRecord(source.results[0])
+//       ? source.results[0]
+//       : null,
+//   ].filter((item): item is Record<string, any> => !!item);
+
+//   for (const item of candidates) {
+//     const paymentMethod =
+//       toTrimmedString(item.paymentMethod) ||
+//       toTrimmedString(item.paymentType) ||
+//       toTrimmedString(item.method) ||
+//       toTrimmedString(item.methodName);
+//     const paymentStatus =
+//       toTrimmedString(item.paymentStatus) ||
+//       toTrimmedString(item.paymentState) ||
+//       toTrimmedString(item.status) ||
+//       toTrimmedString(item.state);
+
+//     if (paymentMethod || paymentStatus) {
+//       return {
+//         paymentMethod,
+//         paymentStatus,
+//       };
+//     }
+//   }
+
+//   return {};
+// };
+
+const extractPaymentInfo = (payload: unknown): PaymentInfo => {
+  const source = isRecord(payload)
+    ? isRecord(payload.data)
+      ? payload.data
+      : payload
+    : {};
+
+  const candidates = [
+    source,
+    source.payment,
+    source.orderPayment,
+    Array.isArray(source.items) ? source.items[0] : null,
+  ].filter((i): i is Record<string, any> => !!i);
+
+  for (const item of candidates) {
+    const paymentMethod =
+      toTrimmedString(item.paymentMethod) ||
+      toTrimmedString(item.payment_method) || // 👈 thêm
+      toTrimmedString(item.method) ||
+      toTrimmedString(item.type);
+
+    const paymentStatus =
+      toTrimmedString(item.paymentStatus) ||
+      toTrimmedString(item.payment_status) || // 👈 thêm
+      toTrimmedString(item.status) ||
+      toTrimmedString(item.state);
+
+    if (paymentMethod || paymentStatus) {
+      return { paymentMethod, paymentStatus };
+    }
+  }
+
+  return {};
+};
+
+export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
+  const { taskId } = route.params;
+  const { tasks, getTaskById, startDelivery, markArrived, addTaskPhoto } =
+    useTask();
+
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [evidenceImageUri, setEvidenceImageUri] = useState<string | null>(null);
+  const [paymentInfo, setPaymentInfo] = useState<PaymentInfo>({});
+  const getTaskByIdRef = useRef(getTaskById);
+  const taskRef = useRef<Task | undefined>(undefined);
+  const paymentRequestIdRef = useRef(0);
+
+  const task = useMemo(
+    () => tasks.find((item) => item.id === taskId),
+    [taskId, tasks],
+  );
+
+  useEffect(() => {
+    getTaskByIdRef.current = getTaskById;
+  }, [getTaskById]);
+
+  useEffect(() => {
+    taskRef.current = task;
+  }, [task]);
+
+
+  const loadPaymentInfo = useCallback(async (orderId?: string) => {
+    console.log("ORDER ID:", orderId);
+
+    const requestId = ++paymentRequestIdRef.current;
+
+    if (!orderId) {
+      setPaymentInfo({});
+      return;
+    }
+
+    try {
+      const response = await fetchPaymentByOrderId(orderId);
+
+
+      if (paymentRequestIdRef.current !== requestId) return;
+
+      setPaymentInfo(extractPaymentInfo(response.data ?? response));
+    } catch (err) {
+      if (paymentRequestIdRef.current !== requestId) return;
+
+      setPaymentInfo({});
+    }
+  }, []);
+
+  const loadTask = useCallback(async () => {
+    const shouldShowLoader = !taskRef.current;
+
+    try {
+      if (shouldShowLoader) {
+        setDetailLoading(true);
+      }
+
+      const refreshedTask = await getTaskByIdRef.current(taskId, {
+        forceRefresh: true,
+      });
+
+      await loadPaymentInfo(refreshedTask?.orderId ?? taskRef.current?.orderId);
+    } finally {
+      if (shouldShowLoader) {
+        setDetailLoading(false);
+      }
+    }
+  }, [loadPaymentInfo, taskId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadTask();
+    }, [loadTask]),
+  );
+
+  const imageUrls = useMemo(() => {
+    const merged = [
+      ...(task?.relatedImageUrls || []),
+      ...(task?.photos || []).map((photo) => photo.url),
+    ];
+
+    return Array.from(new Set(merged.filter(Boolean)));
+  }, [task]);
+
+  const groupedImageSections = useMemo(() => {
+    const photos = task?.photos || [];
+    const photoUrls = new Set(photos.map((photo) => photo.url).filter(Boolean));
+    const sections = [
+      {
+        key: "start_delivery",
+        title: DELIVERY_IMAGE_GROUP_LABELS.start_delivery,
+        items: photos.filter(
+          (photo) => photo.captureStage === "start_delivery",
+        ),
+      },
+      {
+        key: "delivery_success",
+        title: DELIVERY_IMAGE_GROUP_LABELS.delivery_success,
+        items: photos.filter(
+          (photo) => photo.captureStage === "delivery_success",
+        ),
+      },
+      {
+        key: "delivery_failed",
+        title: DELIVERY_IMAGE_GROUP_LABELS.delivery_failed,
+        items: photos.filter(
+          (photo) => photo.captureStage === "delivery_failed",
+        ),
+      },
+      {
+        key: "other",
+        title: DELIVERY_IMAGE_GROUP_LABELS.other,
+        items: [
+          ...photos.filter((photo) => !photo.captureStage),
+
+          ...(task?.relatedImageUrls || [])
+            .filter((url) => !!url && !photoUrls.has(url))
+            .map((url, index) => ({
+              id: `related_${index}_${url}`,
+              url,
+              type: "evidence" as const,
+              uploadedAt: "",
+              uploadedBy: "",
+            })),
+
+          ...((task as any)?.evidenceUrls || [])
+            .filter((url: string) => !!url && !photoUrls.has(url))
+            .map((url: string, index: number) => ({
+              id: `evidence_${index}_${url}`,
+              url,
+              type: "evidence" as const,
+              uploadedAt: "",
+              uploadedBy: "",
+            })),
+        ],
+      },
+    ].filter((section) => section.items.length > 0);
+
+    return sections;
+  }, [task]);
+
+  const timelineEntries = useMemo(() => {
+    if (!task?.deliveryTimeline) return [];
+
+    return [
+      task.deliveryTimeline.deliveringAt
+        ? {
+            key: "delivering",
+            label: "Started delivering",
+            value: task.deliveryTimeline.deliveringAt,
+          }
+        : null,
+      task.deliveryTimeline.arrivedAt
+        ? {
+            key: "arrived",
+            label: "Arrived at destination",
+            value: task.deliveryTimeline.arrivedAt,
+          }
+        : null,
+      task.deliveryTimeline.deliveredAt
+        ? {
+            key: "delivered",
+            label: "Delivered successfully",
+            value: task.deliveryTimeline.deliveredAt,
+          }
+        : null,
+      task.deliveryTimeline.returnedAt
+        ? {
+            key: "returned",
+            label: "Returned / failed delivery",
+            value: task.deliveryTimeline.returnedAt,
+          }
+        : null,
+    ].filter(
+      (item): item is { key: string; label: string; value: string } => !!item,
+    );
+  }, [task]);
+
+  const noteItems = task?.notes || [];
+  const paymentMethodValue = paymentInfo.paymentMethod ?? task?.paymentMethod;
+  const paymentStatusValue = paymentInfo.paymentStatus ?? task?.paymentStatus;
+  const showOrderSection = !!(
+    task?.serviceOrderStatus ||
+    paymentMethodValue ||
+    paymentStatusValue ||
+    task?.totalPrice ||
+    task?.estimatedDuration
+  );
+
+  if (!task) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.centerWrap}>
+          {detailLoading ? (
+            <>
+              <ActivityIndicator color={Colors.primary700} />
+              <Text style={styles.centerText}>Loading task details...</Text>
+            </>
+          ) : (
+            <Text style={styles.centerText}>Task not found.</Text>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const handleStartDelivery = async () => {
+    if (!evidenceImageUri) {
+      Alert.alert(
+        "Missing evidence",
+        "Please capture an evidence photo before starting delivery.",
+      );
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+
+      const cloudinaryUrl = await uploadImageToCloudinary(evidenceImageUri);
+      await addTaskPhoto(task.id, {
+        url: cloudinaryUrl,
+        type: "evidence",
+        uploadedBy: "delivery_staff",
+        captureStage: "start_delivery",
+      });
+
+      await startDelivery(task.id, [cloudinaryUrl]);
+
+      await getTaskById(task.id, { forceRefresh: true });
+
+      setEvidenceImageUri(null);
+    } catch (error: any) {
+      Alert.alert("Cannot update", error?.message || "Cannot start delivery.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCaptureEvidence = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+
+      if (permission.status !== "granted") {
+        Alert.alert(
+          "Missing camera permission",
+          "Camera permission is required to capture evidence.",
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets.length > 0) {
+        setEvidenceImageUri(result.assets[0].uri);
+      }
+    } catch (error: any) {
+      Alert.alert(
+        "Cannot open camera",
+        error?.message || "An error occurred while opening the camera.",
+      );
+    }
+  };
+
+  const handleMarkArrived = async () => {
+    try {
+      setActionLoading(true);
+      await markArrived(task.id);
+    } catch (error: any) {
+      Alert.alert("Cannot update", error?.message || "Cannot mark as arrived.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.safe} edges={["top"]}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
+
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.hero}>
+          <TouchableOpacity
+            style={styles.backRow}
+            activeOpacity={0.8}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={20} color={Colors.white} />
+            <Text style={styles.backText}>Back</Text>
+          </TouchableOpacity>
+
+          <View style={styles.heroMetaRow}>
+            <Text style={styles.taskCode}>{task.taskCode}</Text>
+            <View
+              style={[styles.statusBadge, getStatusBadgeStyle(task.status)]}
+            >
+              <Text
+                style={[
+                  styles.statusBadgeText,
+                  getStatusBadgeTextStyle(task.status),
+                ]}
+              >
+                {DELIVERY_STATUS_LABELS[task.status]}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.taskTitle}>{task.title}</Text>
+          {!!task.description && (
+            <Text style={styles.taskDescription}>{task.description}</Text>
+          )}
+        </View>
+
+        <Section title="Delivery Information">
+          <InfoRow
+            icon="person-outline"
+            label="Recipient"
+            value={task.customer.name || "-"}
+          />
+          <InfoRow
+            icon="call-outline"
+            label="Phone"
+            value={task.customer.phone || "-"}
+          />
+          <InfoRow
+            icon="location-outline"
+            label="Address"
+            value={task.customer.address || "-"}
+          />
+          {/* <InfoRow icon="person-circle-outline" label="Staff" value={task.assignedToName || task.assignedTo || "-"} /> */}
+          {/* <InfoRow icon="barcode-outline" label="Shipping Task ID" value={task.id} /> */}
+          <InfoRow
+            icon="receipt-outline"
+            label="Order Code"
+            value={task.taskCode || "-"}
+          />
+          {/* <InfoRow icon="document-text-outline" label="Order ID" value={task.orderId || "-"} /> */}
+          <InfoRow
+            icon="time-outline"
+            label="Shipping Date"
+            value={formatSchedule(task)}
+          />
+          <InfoRow
+            icon="checkmark-done-outline"
+            label="Completion Date"
+            value={
+              task.deliveryTimeline?.deliveredAt ||
+              task.deliveryTimeline?.returnedAt
+                ? formatDateTimeDisplay(
+                    task.deliveryTimeline?.deliveredAt ||
+                      task.deliveryTimeline?.returnedAt,
+                  )
+                : "-"
+            }
+          />
+        </Section>
+
+        {showOrderSection ? (
+          <Section title="Order & Payment">
+            <KeyValueRow
+              label="Order status"
+              value={task.serviceOrderStatus || "-"}
+            />
+            {/* <KeyValueRow
+              label="Payment method"
+              value={task.paymentMethod || task.paymentStatus
+                ? `${task.paymentMethod || "-"} / ${task.paymentStatus || "-"}`
+                : "-"}
+            /> */}
+            <KeyValueRow
+              label="Total value"
+              value={formatCurrency(task.totalPrice)}
+            />
+            <KeyValueRow
+              label="Payment method"
+              value={paymentMethodValue || "-"}
+            />
+            <KeyValueRow
+              label="Payment status"
+              value={paymentStatusValue || "-"}
+            />
+
+            {/* <KeyValueRow
+              label="Estimated duration"
+              value={task.estimatedDuration ? `${task.estimatedDuration} min` : "-"}
+            /> */}
+          </Section>
+        ) : null}
+
+        {(task.products || []).length ? (
+          <Section title="Related Products">
+            {(task.products || []).map((product) => (
+              <View key={product.id} style={styles.productRow}>
+                <View style={styles.productInfo}>
+                  <Text style={styles.productName}>{product.name}</Text>
+                  {!!product.description && (
+                    <Text style={styles.productDescription}>
+                      {product.description}
+                    </Text>
+                  )}
+                </View>
+                <Text style={styles.productQty}>x{product.quantity}</Text>
+              </View>
+            ))}
+          </Section>
+        ) : null}
+
+        {!!task.description ? (
+          <Section title="Staff Note">
+            <Text style={styles.noteText}>{task.description}</Text>
+          </Section>
+        ) : null}
+
+        {task.status === "pending" ? (
+          <Section title="Start Delivery Evidence">
+            <Text style={styles.ruleText}>
+              Capture an evidence photo from the camera before starting
+              delivery.
+            </Text>
+            {/* <Text style={styles.noteMeta}>
+              Current order status: {task.serviceOrderStatus || "unknown"}. Backend only accepts Start Delivery when the order is in Processing.
+            </Text> */}
+
+            <TouchableOpacity
+              style={styles.captureBox}
+              activeOpacity={0.85}
+              disabled={actionLoading}
+              onPress={handleCaptureEvidence}
+            >
+              {evidenceImageUri ? (
+                <Image
+                  source={{ uri: evidenceImageUri }}
+                  style={styles.capturePreviewImage}
+                />
+              ) : (
+                <View style={styles.capturePlaceholderWrap}>
+                  <Ionicons
+                    name="camera-outline"
+                    size={40}
+                    color={Colors.gray400}
+                  />
+                  <Text style={styles.capturePlaceholderTitle}>
+                    Camera only
+                  </Text>
+                  <Text style={styles.capturePlaceholderSubtitle}>
+                    Tap here to take an evidence photo before starting delivery.
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.retakeButton}
+              activeOpacity={0.85}
+              disabled={actionLoading}
+              onPress={handleCaptureEvidence}
+            >
+              <Ionicons
+                name="refresh-outline"
+                size={16}
+                color={Colors.primary700}
+              />
+              <Text style={styles.retakeText}>
+                {evidenceImageUri ? "Retake photo" : "Open camera"}
+              </Text>
+            </TouchableOpacity>
+          </Section>
+        ) : null}
+
+        {noteItems.length ? (
+          <Section title="Internal Notes">
+            {noteItems.map((note) => (
+              <View key={note.id} style={styles.noteItem}>
+                <Text style={styles.noteText}>{note.content}</Text>
+                <Text style={styles.noteMeta}>
+                  {note.authorName || note.createdBy || "System"} •{" "}
+                  {formatDateTimeDisplay(note.createdAt)}
+                </Text>
+              </View>
+            ))}
+          </Section>
+        ) : null}
+
+        {timelineEntries.length ? (
+          <Section title="Delivery Timeline">
+            {timelineEntries.map((entry, index) => (
+              <View
+                key={entry.key}
+                style={[
+                  styles.timelineRow,
+                  index === timelineEntries.length - 1 &&
+                    styles.timelineRowLast,
+                ]}
+              >
+                <View style={styles.timelineDot} />
+                <View style={styles.timelineContent}>
+                  <Text style={styles.infoLabel}>{entry.label}</Text>
+                  <Text style={styles.infoValue}>
+                    {formatDateTimeDisplay(entry.value)}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </Section>
+        ) : null}
+
+        {!!task.deliveryFailureReason && (
+          <Section title="Delivery Failure Reason">
+            <Text style={styles.failureReason}>
+              {task.deliveryFailureReason}
+            </Text>
+          </Section>
+        )}
+
+        <Section title={`Related Images (${imageUrls.length})`}>
+          {groupedImageSections.length ? (
+            <View style={styles.groupedImageWrap}>
+              {groupedImageSections.map((section) => (
+                <View key={section.key} style={styles.imageSectionWrap}>
+                  <Text style={styles.imageSectionTitle}>{section.title}</Text>
+                  <View style={styles.imageGrid}>
+                    {section.items.map((photo, index) => (
+                      <View
+                        key={`${photo.url}_${index}`}
+                        style={styles.imageCard}
+                      >
+                        <Image
+                          source={{ uri: photo.url }}
+                          style={styles.imageItem}
+                        />
+                        {photo.uploadedAt ? (
+                          <Text style={styles.imageMetaText}>
+                            {formatDateTimeDisplay(photo.uploadedAt)}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.emptyPhotoWrap}>
+              <Ionicons name="image-outline" size={28} color={Colors.gray400} />
+              <Text style={styles.emptyPhotoText}>
+                No related images for this task.
+              </Text>
+            </View>
+          )}
+        </Section>
+      </ScrollView>
+
+      {detailLoading ? (
+        <View style={styles.loadingOverlay} pointerEvents="none">
+          <ActivityIndicator color={Colors.primary700} />
+        </View>
+      ) : null}
+
+      <View style={styles.bottomBar}>
+        {task.status === "pending" ? (
+          <PrimaryButton
+            title="Start Delivery"
+            loading={actionLoading}
+            onPress={handleStartDelivery}
+          />
+        ) : null}
+
+        {task.status === "delivering" ? (
+          <PrimaryButton
+            title="Mark as Arrived"
+            loading={actionLoading}
+            onPress={handleMarkArrived}
+          />
+        ) : null}
+
+        {task.status === "arrived" ? (
+          <View style={styles.dualActionWrap}>
+            <TouchableOpacity
+              style={[
+                styles.secondaryButton,
+                actionLoading && styles.buttonDisabled,
+              ]}
+              activeOpacity={0.85}
+              disabled={actionLoading}
+              onPress={() =>
+                navigation.navigate("DeliveryPhotoCapture", {
+                  taskId: task.id,
+                  mode: "returned",
+                })
+              }
+            >
+              <Ionicons
+                name="close-circle-outline"
+                size={18}
+                color={Colors.error}
+              />
+              <Text style={styles.secondaryButtonText}>Delivery Failed</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.primaryButton,
+                actionLoading && styles.buttonDisabled,
+              ]}
+              activeOpacity={0.85}
+              disabled={actionLoading}
+              onPress={() =>
+                navigation.navigate("DeliveryPhotoCapture", {
+                  taskId: task.id,
+                  mode: "delivered",
+                })
+              }
+            >
+              <Ionicons name="camera-outline" size={18} color={Colors.white} />
+              <Text style={styles.primaryButtonText}>Delivery Successful</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {task.status === "delivered" ? (
+          <StatusMessage
+            text="Task has been successfully delivered and evidence is available."
+            tone="success"
+          />
+        ) : null}
+
+        {task.status === "returned" ? (
+          <StatusMessage
+            text="Task has been marked as delivery failed."
+            tone="error"
+          />
+        ) : null}
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {children}
+    </View>
+  );
+}
+
+function InfoRow({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.infoRow}>
+      <Ionicons name={icon} size={18} color={Colors.primary700} />
+      <View style={styles.infoContent}>
+        <Text style={styles.infoLabel}>{label}</Text>
+        <Text style={styles.infoValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function PrimaryButton({
+  title,
+  loading,
+  onPress,
+}: {
+  title: string;
+  loading: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.primaryButton, loading && styles.buttonDisabled]}
+      activeOpacity={0.85}
+      disabled={loading}
+      onPress={onPress}
+    >
+      {loading ? (
+        <ActivityIndicator color={Colors.white} />
+      ) : (
+        <Text style={styles.primaryButtonText}>{title}</Text>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+function KeyValueRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.keyValueRow}>
+      <Text style={styles.keyValueLabel}>{label}</Text>
+      <Text style={styles.keyValueValue}>{value}</Text>
+    </View>
+  );
+}
+
+function StatusMessage({
+  text,
+  tone,
+}: {
+  text: string;
+  tone: "success" | "error";
+}) {
+  return (
+    <View
+      style={[
+        styles.statusMessage,
+        tone === "success"
+          ? styles.statusMessageSuccess
+          : styles.statusMessageError,
+      ]}
+    >
+      <Text
+        style={[
+          styles.statusMessageText,
+          tone === "success"
+            ? styles.statusMessageTextSuccess
+            : styles.statusMessageTextError,
+        ]}
+      >
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+function getStatusBadgeStyle(status: TaskStatus) {
+  switch (status) {
+    case "delivering":
+      return { backgroundColor: "#DBEAFE" };
+    case "arrived":
+      return { backgroundColor: "#E0F2FE" };
+    case "delivered":
+      return { backgroundColor: "#DCFCE7" };
+    case "returned":
+      return { backgroundColor: "#FEE2E2" };
+    default:
+      return { backgroundColor: "#FEF3C7" };
+  }
+}
+
+function getStatusBadgeTextStyle(status: TaskStatus) {
+  switch (status) {
+    case "delivering":
+      return { color: "#1D4ED8" };
+    case "arrived":
+      return { color: "#0369A1" };
+    case "delivered":
+      return { color: "#166534" };
+    case "returned":
+      return { color: "#B91C1C" };
+    default:
+      return { color: "#92400E" };
+  }
+}
+
+function formatSchedule(task: Task) {
+  if (!task.appointmentDateRaw && !task.dueDate) return "Chưa có lịch giao";
+  const dateText = formatDate(task.dueDate);
+  return task.dueTime ? `${dateText} • ${task.dueTime}` : dateText;
+}
+
+function formatDateTimeDisplay(value?: string) {
+  if (!value) return "-";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+
+  const hours = String(parsed.getHours()).padStart(2, "0");
+  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  return `${formatDate(parsed.toISOString())} • ${hours}:${minutes}`;
+}
+
+function formatCurrency(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return `${value.toLocaleString("vi-VN")} ₫`;
+}
+
+const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: "#EDF2F7",
+  },
+  centerWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  centerText: {
+    color: Colors.gray600,
+    fontSize: Typography.base,
+  },
+  content: {
+    paddingBottom: 140,
+  },
+  hero: {
+    backgroundColor: Colors.primary900,
+    paddingHorizontal: Spacing.base,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.xl,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+  },
+  backRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+  },
+  backText: {
+    color: Colors.white,
+    fontSize: Typography.base,
+    fontWeight: "600",
+  },
+  heroMetaRow: {
+    marginTop: Spacing.base,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  taskCode: {
+    color: Colors.primary100,
+    fontSize: Typography.sm,
+    fontWeight: "700",
+    flex: 1,
+  },
+  statusBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  statusBadgeText: {
+    fontSize: Typography.sm,
+    fontWeight: "700",
+  },
+  taskTitle: {
+    marginTop: 12,
+    color: Colors.white,
+    fontSize: Typography["2xl"],
+    fontWeight: "700",
+    lineHeight: 30,
+  },
+  taskDescription: {
+    marginTop: 8,
+    color: "#D8E7FA",
+    fontSize: Typography.base,
+    lineHeight: 22,
+  },
+  section: {
+    marginTop: Spacing.base,
+    marginHorizontal: Spacing.base,
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.base,
+    borderWidth: 1,
+    borderColor: "#DAE4EF",
+    ...Shadow.sm,
+  },
+  sectionTitle: {
+    color: Colors.primary900,
+    fontSize: Typography.lg,
+    fontWeight: "700",
+    marginBottom: Spacing.sm,
+  },
+  infoRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingVertical: 8,
+  },
+  infoContent: {
+    flex: 1,
+  },
+  infoLabel: {
+    color: Colors.gray500,
+    fontSize: Typography.sm,
+    marginBottom: 4,
+  },
+  infoValue: {
+    color: Colors.gray800,
+    fontSize: Typography.base,
+    lineHeight: 22,
+  },
+  productRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.gray100,
+  },
+  productInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  productName: {
+    color: Colors.gray800,
+    fontSize: Typography.base,
+    fontWeight: "600",
+  },
+  productDescription: {
+    marginTop: 4,
+    color: Colors.gray500,
+    fontSize: Typography.sm,
+  },
+  productQty: {
+    color: Colors.primary700,
+    fontSize: Typography.base,
+    fontWeight: "700",
+  },
+  noteText: {
+    color: Colors.gray800,
+    fontSize: Typography.base,
+    lineHeight: 22,
+  },
+  failureReason: {
+    color: Colors.error,
+    fontSize: Typography.base,
+    lineHeight: 22,
+    fontWeight: "600",
+  },
+  noteItem: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.gray100,
+  },
+  noteMeta: {
+    marginTop: 6,
+    color: Colors.gray500,
+    fontSize: Typography.sm,
+  },
+  ruleText: {
+    color: Colors.gray800,
+    fontSize: Typography.base,
+    lineHeight: 22,
+    fontWeight: "600",
+  },
+  timelineRow: {
+    flexDirection: "row",
+    gap: 12,
+    paddingBottom: 14,
+  },
+  timelineRowLast: {
+    paddingBottom: 0,
+  },
+  timelineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    marginTop: 7,
+    backgroundColor: Colors.primary700,
+  },
+  timelineContent: {
+    flex: 1,
+  },
+  keyValueRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.gray100,
+  },
+  keyValueLabel: {
+    color: Colors.gray500,
+    fontSize: Typography.base,
+  },
+  keyValueValue: {
+    flex: 1,
+    textAlign: "right",
+    color: Colors.gray800,
+    fontSize: Typography.base,
+    fontWeight: "600",
+  },
+  imageGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  groupedImageWrap: {
+    gap: 16,
+  },
+  imageSectionWrap: {
+    gap: 10,
+  },
+  imageSectionTitle: {
+    color: Colors.primary900,
+    fontSize: Typography.base,
+    fontWeight: "700",
+  },
+  imageCard: {
+    width: 96,
+    gap: 6,
+  },
+  captureBox: {
+    marginTop: Spacing.base,
+    minHeight: 220,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: Colors.gray300,
+    backgroundColor: Colors.white,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  capturePreviewImage: {
+    width: "100%",
+    height: 220,
+  },
+  capturePlaceholderWrap: {
+    alignItems: "center",
+    paddingHorizontal: Spacing.lg,
+  },
+  capturePlaceholderTitle: {
+    marginTop: 12,
+    color: Colors.primary900,
+    fontSize: Typography.md,
+    fontWeight: "700",
+  },
+  capturePlaceholderSubtitle: {
+    marginTop: 6,
+    color: Colors.gray500,
+    fontSize: Typography.base,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  retakeButton: {
+    marginTop: Spacing.base,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  retakeText: {
+    color: Colors.primary700,
+    fontSize: Typography.base,
+    fontWeight: "600",
+  },
+  imageItem: {
+    width: 96,
+    height: 96,
+    borderRadius: 12,
+    backgroundColor: Colors.gray100,
+  },
+  imageMetaText: {
+    color: Colors.gray500,
+    fontSize: Typography.xs,
+    lineHeight: 16,
+  },
+  emptyPhotoWrap: {
+    minHeight: 120,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: Colors.gray300,
+    gap: 8,
+  },
+  emptyPhotoText: {
+    color: Colors.gray500,
+    fontSize: Typography.base,
+  },
+  bottomBar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: Spacing.base,
+    paddingTop: 10,
+    paddingBottom: 18,
+    backgroundColor: "rgba(237,242,247,0.98)",
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(237,242,247,0.2)",
+  },
+  primaryButton: {
+    minHeight: 54,
+    borderRadius: 14,
+    backgroundColor: Colors.primary700,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  primaryButtonText: {
+    color: Colors.white,
+    fontSize: Typography.md,
+    fontWeight: "700",
+  },
+  secondaryButton: {
+    flex: 1,
+    minHeight: 54,
+    borderRadius: 14,
+    backgroundColor: Colors.white,
+    borderWidth: 1,
+    borderColor: "#F5C2C7",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  secondaryButtonText: {
+    color: Colors.error,
+    fontSize: Typography.base,
+    fontWeight: "700",
+  },
+  dualActionWrap: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
+  statusMessage: {
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  statusMessageSuccess: {
+    backgroundColor: "#DCFCE7",
+  },
+  statusMessageError: {
+    backgroundColor: "#FEE2E2",
+  },
+  statusMessageText: {
+    fontSize: Typography.base,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  statusMessageTextSuccess: {
+    color: "#166534",
+  },
+  statusMessageTextError: {
+    color: "#B91C1C",
+  },
+});

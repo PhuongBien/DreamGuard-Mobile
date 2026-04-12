@@ -11,18 +11,25 @@ import TaskDetailScreen from "../screens/task/TaskDetailScreen";
 import CheckInOutScreen from "../screens/task/CheckInOutScreen";
 import {PhotoUploadScreen} from "../screens/task/PhotoUploadScreen";
 import AddNoteScreen from "../screens/task/AddNoteScreen";
+import DeliveryTaskListScreen from "../screens/task/DeliveryTaskListScreen";
+import DeliveryTaskDetailScreen from "../screens/task/DeliveryTaskDetailScreen";
+import DeliveryPhotoCaptureScreen from "../screens/task/DeliveryPhotoCaptureScreen";
+import { useAuth } from "../context/AuthContext";
 
 const Stack = createNativeStackNavigator<TaskStackParamList>();
 
 // ================= NAVIGATOR =================
 
 export default function TaskStackNavigator() {
+  const { user } = useAuth();
+  const isDeliveryStaff = user?.role === "delivery_driver";
+
   return (
     <Stack.Navigator screenOptions={{}}>
       {/* ================= TASK LIST ================= */}
       <Stack.Screen
         name="TaskList"
-        component={TaskListScreen}
+        component={isDeliveryStaff ? DeliveryTaskListScreen : TaskListScreen}
         options={{
           headerShown: false,
         }}
@@ -31,7 +38,7 @@ export default function TaskStackNavigator() {
       {/* ================= TASK DETAIL ================= */}
       <Stack.Screen
         name="TaskDetail"
-        component={TaskDetailScreen}
+        component={isDeliveryStaff ? DeliveryTaskDetailScreen : TaskDetailScreen}
         options={{
           headerShown: false,
         }}
@@ -52,6 +59,14 @@ export default function TaskStackNavigator() {
         component={PhotoUploadScreen}
         options={{
           title: "Upload Photo",
+        }}
+      />
+
+      <Stack.Screen
+        name="DeliveryPhotoCapture"
+        component={DeliveryPhotoCaptureScreen}
+        options={{
+          title: "Capture Evidence",
         }}
       />
 

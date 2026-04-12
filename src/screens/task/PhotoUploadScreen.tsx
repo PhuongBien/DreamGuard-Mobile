@@ -38,7 +38,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission denied", "Permission to access the photo library is required.");
+        // Alert.alert("Permission denied", "Permission to access the photo library is required.");
         return;
       }
 
@@ -65,7 +65,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission denied", "Permission to access the camera is required.");
+        // Alert.alert("Permission denied", "Permission to access the camera is required.");
         return;
       }
 
@@ -181,7 +181,6 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
     </View>
   );
 };
-
 
 const styles = StyleSheet.create({
   container: {
