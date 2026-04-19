@@ -1,6 +1,7 @@
 export * from "./auth";
 export * from "./user";
 export * from "./task";
+export * from "./trade-in";
 export * from "./notification";
 export * from "./navigation";
 export * from "./api";

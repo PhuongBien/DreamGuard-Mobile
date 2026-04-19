@@ -23,7 +23,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useTask } from "../../context/TaskContext";
-import { Task, TaskStatus } from "../../types";
+import { Task, TaskStatus, TradeInOrder } from "../../types";
 import { TaskStackParamList } from "../../types/navigation";
 import {
   BorderRadius,
@@ -35,6 +35,8 @@ import {
 import { fetchPaymentByOrderId } from "../../utils/api";
 import { formatDate } from "../../utils/date";
 import { uploadImageToCloudinary } from "../../utils/cloudinary";
+import { TradeInOrderService } from "../../services/trade-in-order.service";
+import TradeInDetailScreen from "./TradeInDetailScreen";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "TaskDetail">;
 
@@ -152,7 +154,13 @@ const extractPaymentInfo = (payload: unknown): PaymentInfo => {
 };
 
 export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
-  const { taskId } = route.params;
+  const { taskId, type } = route.params;
+  
+  // If type is "tradein", render the TradeIn-specific screen
+  if (type === "tradein") {
+    return <TradeInDetailScreen route={route} navigation={navigation} />;
+  }
+
   const { tasks, getTaskById, startDelivery, markArrived, addTaskPhoto } =
     useTask();
 

@@ -8,6 +8,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -16,12 +17,23 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { useTask } from "../../context/TaskContext";
 import { useAuth } from "../../context/AuthContext";
-import { Task, TaskFilter, TaskStatus } from "../../types";
+import { Task, TaskFilter, TaskStatus, TradeInOrder, TradeInOrderStatus } from "../../types";
 import { TaskStackParamList } from "../../types/navigation";
 import { Colors, Shadow, Spacing, Typography } from "../../constants/theme";
 import { formatDate } from "../../utils/date";
+import { TradeInOrderService } from "../../services/trade-in-order.service";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "TaskList">;
+
+const TRADEIN_STATUS_LABELS: Record<TradeInOrderStatus, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  ready_for_delivery: "Ready for Delivery",
+  processing: "Processing",
+  delivered: "Delivered",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
 
 const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
   pending: "Pending",
@@ -46,12 +58,24 @@ const DELIVERY_FILTERS: Array<{ value: TaskFilter; label: string }> = [
   { value: "returned", label: "Returned" },
 ];
 
+const TRADEIN_FILTERS: Array<{ value: TradeInOrderStatus | "all"; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "ready_for_delivery", label: "Ready" },
+  { value: "processing", label: "Processing" },
+  { value: "delivered", label: "Delivered" },
+  { value: "completed", label: "Completed" },
+];
+
 export default function DeliveryTaskListScreen({ navigation }: Props) {
   const { tasks, refreshTasks } = useTask();
   const { user } = useAuth();
 
+  const [tab, setTab] = useState<"tasks" | "tradein">("tasks");
   const [selectedStatus, setSelectedStatus] = useState<TaskFilter>("all");
+  const [selectedTradeInStatus, setSelectedTradeInStatus] = useState<TradeInOrderStatus | "all">("all");
   const [refreshing, setRefreshing] = useState(false);
+  const [tradeInOrders, setTradeInOrders] = useState<TradeInOrder[]>([]);
+  const [tradeInLoading, setTradeInLoading] = useState(false);
 
   const orderedTasks = useMemo(() => {
     const filtered =
@@ -66,6 +90,19 @@ export default function DeliveryTaskListScreen({ navigation }: Props) {
     });
   }, [selectedStatus, tasks]);
 
+  const orderedTradeInOrders = useMemo(() => {
+    const filtered =
+      selectedTradeInStatus === "all"
+        ? tradeInOrders
+        : tradeInOrders.filter((order) => order.status === selectedTradeInStatus);
+
+    return [...filtered].sort((a, b) => {
+      const aTime = new Date(a.createdAt || 0).getTime();
+      const bTime = new Date(b.createdAt || 0).getTime();
+      return bTime - aTime;
+    });
+  }, [selectedTradeInStatus, tradeInOrders]);
+
   const stats = useMemo(
     () => ({
       total: tasks.length,
@@ -77,20 +114,57 @@ export default function DeliveryTaskListScreen({ navigation }: Props) {
     [tasks],
   );
 
+  const tradeInStats = useMemo(
+    () => ({
+      total: tradeInOrders.length,
+      active: tradeInOrders.filter(
+        (order) => order.status === "processing" || order.status === "ready_for_delivery",
+      ).length,
+      done: tradeInOrders.filter((order) => order.status === "completed").length,
+    }),
+    [tradeInOrders],
+  );
+
   const loadTasks = useCallback(async () => {
     await refreshTasks({ status: selectedStatus });
   }, [refreshTasks, selectedStatus]);
 
+  const loadTradeInOrders = useCallback(async () => {
+    try {
+      setTradeInLoading(true);
+      const { orders } = await TradeInOrderService.fetchWaitingOrders({
+        status: selectedTradeInStatus === "all" ? undefined : (selectedTradeInStatus as TradeInOrderStatus),
+      });
+      setTradeInOrders(orders);
+    } catch (error) {
+      console.error("Failed to load TradeIn orders:", error);
+      setTradeInOrders([]);
+    } finally {
+      setTradeInLoading(false);
+    }
+  }, [selectedTradeInStatus]);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadTasks();
-    setRefreshing(false);
-  }, [loadTasks]);
+    try {
+      if (tab === "tasks") {
+        await loadTasks();
+      } else {
+        await loadTradeInOrders();
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, [tab, loadTasks, loadTradeInOrders]);
 
   useFocusEffect(
     useCallback(() => {
-      loadTasks();
-    }, [loadTasks]),
+      if (tab === "tasks") {
+        loadTasks();
+      } else {
+        loadTradeInOrders();
+      }
+    }, [tab, loadTasks, loadTradeInOrders]),
   );
 
   return (
@@ -105,15 +179,60 @@ export default function DeliveryTaskListScreen({ navigation }: Props) {
         </Text>
 
         <View style={styles.statRow}>
-          <StatCard label="Total Tasks" value={stats.total} />
-          <StatCard label="In Progress" value={stats.active} />
-          <StatCard label="Completed" value={stats.done} />
+          {tab === "tasks" ? (
+            <>
+              <StatCard label="Total Tasks" value={stats.total} />
+              <StatCard label="In Progress" value={stats.active} />
+              <StatCard label="Completed" value={stats.done} />
+            </>
+          ) : (
+            <>
+              <StatCard label="Total Orders" value={tradeInStats.total} />
+              <StatCard label="In Progress" value={tradeInStats.active} />
+              <StatCard label="Completed" value={tradeInStats.done} />
+            </>
+          )}
         </View>
       </View>
 
+      <View style={styles.tabBar}>
+        <TouchableOpacity
+          style={[styles.tabButton, tab === "tasks" && styles.tabButtonActive]}
+          activeOpacity={0.7}
+          onPress={() => setTab("tasks")}
+        >
+          <MaterialCommunityIcons
+            name="truck-delivery"
+            size={18}
+            color={tab === "tasks" ? Colors.white : Colors.primary700}
+          />
+          <Text style={[styles.tabText, tab === "tasks" && styles.tabTextActive]}>
+            Delivery Tasks
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabButton, tab === "tradein" && styles.tabButtonActive]}
+          activeOpacity={0.7}
+          onPress={() => setTab("tradein")}
+        >
+          <MaterialCommunityIcons
+            name="handshake"
+            size={18}
+            color={tab === "tradein" ? Colors.white : Colors.primary700}
+          />
+          <Text style={[styles.tabText, tab === "tradein" && styles.tabTextActive]}>
+            Trade-In Orders
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Task List</Text>
-        <Text style={styles.sectionSubTitle}>{orderedTasks.length} items</Text>
+        <Text style={styles.sectionTitle}>
+          {tab === "tasks" ? "Task List" : "Trade-In Orders"}
+        </Text>
+        <Text style={styles.sectionSubTitle}>
+          {tab === "tasks" ? orderedTasks.length : orderedTradeInOrders.length} items
+        </Text>
       </View>
 
       <View style={styles.filterBarWrap}>
@@ -122,55 +241,112 @@ export default function DeliveryTaskListScreen({ navigation }: Props) {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterContainer}
         >
-          {DELIVERY_FILTERS.map((filter) => {
-            const active = selectedStatus === filter.value;
-
-            return (
-              <TouchableOpacity
-                key={filter.value}
-                style={[styles.filterChip, active && styles.filterChipActive]}
-                activeOpacity={0.85}
-                onPress={() => setSelectedStatus(filter.value)}
-              >
-                <Text
-                  numberOfLines={1}
-                  style={[styles.filterText, active && styles.filterTextActive]}
-                >
-                  {filter.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+          {tab === "tasks"
+            ? DELIVERY_FILTERS.map((filter) => {
+                const active = selectedStatus === filter.value;
+                return (
+                  <TouchableOpacity
+                    key={filter.value}
+                    style={[styles.filterChip, active && styles.filterChipActive]}
+                    activeOpacity={0.85}
+                    onPress={() => setSelectedStatus(filter.value)}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.filterText, active && styles.filterTextActive]}
+                    >
+                      {filter.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
+            : TRADEIN_FILTERS.map((filter) => {
+                const active = selectedTradeInStatus === filter.value;
+                return (
+                  <TouchableOpacity
+                    key={filter.value}
+                    style={[styles.filterChip, active && styles.filterChipActive]}
+                    activeOpacity={0.85}
+                    onPress={() => setSelectedTradeInStatus(filter.value)}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.filterText, active && styles.filterTextActive]}
+                    >
+                      {filter.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
         </ScrollView>
       </View>
 
-      <FlatList
-        data={orderedTasks}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <TaskRow
-            item={item}
-            statusLabel={DELIVERY_STATUS_LABELS[item.status]}
-            onPress={() => navigation.navigate("TaskDetail", { taskId: item.id })}
-          />
-        )}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            colors={[Colors.primary700]}
-          />
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyWrap}>
-            <Ionicons name="cube-outline" size={36} color={Colors.gray400} />
-            <Text style={styles.emptyTitle}>No matching tasks</Text>
-            <Text style={styles.emptySubTitle}>Pull down to refresh the list.</Text>
-          </View>
-        }
-      />
+      {tab === "tasks" ? (
+        <FlatList
+          data={orderedTasks}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <TaskRow
+              item={item}
+              statusLabel={DELIVERY_STATUS_LABELS[item.status]}
+              onPress={() => navigation.navigate("TaskDetail", { taskId: item.id, type: "task" })}
+            />
+          )}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              colors={[Colors.primary700]}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyWrap}>
+              <Ionicons name="cube-outline" size={36} color={Colors.gray400} />
+              <Text style={styles.emptyTitle}>No matching tasks</Text>
+              <Text style={styles.emptySubTitle}>Pull down to refresh the list.</Text>
+            </View>
+          }
+        />
+      ) : (
+        <>
+          {tradeInLoading ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator size="large" color={Colors.primary700} />
+              <Text style={styles.loadingText}>Loading Trade-In orders...</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={orderedTradeInOrders}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TradeInOrderRow
+                  item={item}
+                  statusLabel={TRADEIN_STATUS_LABELS[item.status]}
+                  onPress={() => navigation.navigate("TaskDetail", { taskId: item.id, type: "tradein" })}
+                />
+              )}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handleRefresh}
+                  colors={[Colors.primary700]}
+                />
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyWrap}>
+                  <MaterialCommunityIcons name="handshake-outline" size={36} color={Colors.gray400} />
+                  <Text style={styles.emptyTitle}>No Trade-In orders</Text>
+                  <Text style={styles.emptySubTitle}>Pull down to refresh the list.</Text>
+                </View>
+              }
+            />
+          )}
+        </>
+      )}
     </SafeAreaView>
   );
 }
@@ -239,6 +415,69 @@ function TaskRow({
   );
 }
 
+function TradeInOrderRow({
+  item,
+  statusLabel,
+  onPress,
+}: {
+  item: TradeInOrder;
+  statusLabel: string;
+  onPress: () => void;
+}) {
+  const statusStyle = getTradeInStatusStyle(item.status);
+  const deviceLabel = item.devices.oldDevice
+    ? `${item.devices.oldDevice.name} → ${item.devices.newDevice?.name || "New Device"}`
+    : "Trade-In Order";
+
+  return (
+    <TouchableOpacity style={styles.card} activeOpacity={0.86} onPress={onPress}>
+      <View style={styles.cardTopRow}>
+        <View style={styles.badgeRow}>
+          <View style={styles.iconWrap}>
+            <MaterialCommunityIcons
+              name="handshake"
+              size={18}
+              color={Colors.primary700}
+            />
+          </View>
+          <Text style={styles.cardCode}>{item.orderCode}</Text>
+        </View>
+
+        <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
+          <Text style={[styles.statusText, { color: statusStyle.text }]}>
+            {statusLabel}
+          </Text>
+        </View>
+      </View>
+
+      <Text style={styles.cardTitle}>{deviceLabel}</Text>
+
+      <View style={styles.metaRow}>
+        <Ionicons name="person-outline" size={16} color={Colors.primary700} />
+        <Text style={styles.metaText} numberOfLines={1}>
+          {item.customer.name || "No customer available"}
+        </Text>
+      </View>
+
+      <View style={styles.metaRow}>
+        <Ionicons name="location-outline" size={16} color={Colors.primary700} />
+        <Text style={styles.metaText} numberOfLines={1}>
+          {item.customer.address || "No address available"}
+        </Text>
+      </View>
+
+      <View style={styles.cardBottomRow}>
+        <View style={styles.metaRowInline}>
+          <Ionicons name="call-outline" size={16} color={Colors.primary700} />
+          <Text style={styles.metaText}>{item.customer.phone}</Text>
+        </View>
+
+        <Ionicons name="chevron-forward" size={18} color={Colors.primary700} />
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
     <View style={styles.statCard}>
@@ -258,6 +497,23 @@ function getStatusStyle(status: TaskStatus) {
       return { bg: "#DCFCE7", text: "#166534" };
     case "returned":
       return { bg: "#FEE2E2", text: "#B91C1C" };
+    default:
+      return { bg: "#FEF3C7", text: "#92400E" };
+  }
+}
+
+function getTradeInStatusStyle(status: TradeInOrderStatus) {
+  switch (status) {
+    case "processing":
+      return { bg: "#DBEAFE", text: "#1D4ED8" };
+    case "ready_for_delivery":
+      return { bg: "#FEE2E2", text: "#B91C1C" };
+    case "delivered":
+      return { bg: "#E0F2FE", text: "#0369A1" };
+    case "completed":
+      return { bg: "#DCFCE7", text: "#166534" };
+    case "cancelled":
+      return { bg: "#F3F4F6", text: "#6B7280" };
     default:
       return { bg: "#FEF3C7", text: "#92400E" };
   }
@@ -479,5 +735,46 @@ const styles = StyleSheet.create({
     marginTop: 4,
     color: Colors.gray500,
     fontSize: Typography.base,
+  },
+  tabBar: {
+    flexDirection: "row",
+    marginHorizontal: Spacing.base,
+    marginTop: Spacing.base,
+    backgroundColor: "#F7FAFD",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#D8E4F0",
+    padding: 4,
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  tabButtonActive: {
+    backgroundColor: Colors.primary700,
+  },
+  tabText: {
+    color: Colors.primary700,
+    fontSize: Typography.sm,
+    fontWeight: "600",
+  },
+  tabTextActive: {
+    color: Colors.white,
+  },
+  loadingWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: Spacing["3xl"],
+  },
+  loadingText: {
+    marginTop: Spacing.base,
+    color: Colors.gray600,
+    fontSize: Typography.sm,
   },
 });
