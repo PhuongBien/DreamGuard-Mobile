@@ -364,26 +364,26 @@ const normalizeTask = (input: unknown): Task => {
 
   // ── Customer (top-level fields from backend, no nested customer object) ─────
   const customerName =
-    raw.receiverName || raw.customerName || raw.phoneNumber || "Khách hàng";
+    raw.receiverName || raw.customerName || raw.phoneNumber || "Customer";
 
   const customerPhone = String(
     raw.phoneNumber ?? raw.customerPhone ?? "",
   ).trim();
   const customerAddress =
-    raw.address || raw.serviceAddress || "Chưa có địa chỉ";
+    raw.address || raw.serviceAddress || "No address available";
   const customerNote =
     typeof raw.customerNote === "string" ? raw.customerNote.trim() : "";
 
   // ── Title constructed from service name + customer ─────────────────────────
   const titleParts = [
-    servicePackageName || raw.serviceName || "Dịch vụ",
+    servicePackageName || raw.serviceName || "Service",
     productTypeName,
   ]
     .filter(Boolean)
     .join(" · ");
   const title = titleParts
     ? `${titleParts} — ${customerName}`
-    : `Nhiệm vụ — ${customerName}`;
+    : `Task — ${customerName}`;
 
   // ── Appointment date ───────────────────────────────────────────────────────
   const dueSplit = splitDateTime(
@@ -456,12 +456,12 @@ const normalizeTask = (input: unknown): Task => {
     name:
       [item?.servicePackageName, item?.productTypeName]
         .filter(Boolean)
-        .join(" – ") || "Dịch vụ",
+        .join(" – ") || "Service",
     type: String(item?.productTypeName ?? "service"),
     quantity: Number(item?.quantity) || 1,
     description:
       item?.totalPrice !== undefined
-        ? `${Number(item.totalPrice).toLocaleString("vi-VN")} ₫`
+        ? `${new Intl.NumberFormat("en-US").format(Number(item.totalPrice))} ₫`
         : undefined,
   }));
 

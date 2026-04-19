@@ -203,7 +203,7 @@ export default function NotificationsScreen({
         ListEmptyComponent={
           loading ? null : (
             <EmptyState
-              icon="🔔"
+              icon="notifications-circle-outline"
               title="No announcement yet."
               subtitle="You will receive notifications when there are new tasks or updates."
             />

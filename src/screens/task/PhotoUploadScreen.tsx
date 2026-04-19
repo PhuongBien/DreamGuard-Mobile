@@ -89,15 +89,19 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
   };
 
   const handleChooseImage = () => {
-    Alert.alert(
-      "Choose Image",
-      "Do you want to take a new photo or select from the library?",
-      [
-        { text: "Take Photo", onPress: takePhoto },
-        { text: "Library", onPress: pickFromLibrary },
-        { text: "Cancel", style: "cancel" },
-      ]
-    );
+    if (photoType === "after") {
+      takePhoto();
+    } else {
+      Alert.alert(
+        "Choose Image",
+        "Do you want to take a new photo or select from the library?",
+        [
+          { text: "Take Photo", onPress: takePhoto },
+          { text: "Library", onPress: pickFromLibrary },
+          { text: "Cancel", style: "cancel" },
+        ]
+      );
+    }
   };
 
   const handleUpload = async () => {
@@ -147,7 +151,9 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
         ) : (
           <View style={styles.placeholderWrap}>
             <Ionicons name="camera-outline" size={40} color={Colors.gray400} />
-            <Text style={styles.placeholder}>Tap to select or take a photo</Text>
+            <Text style={styles.placeholder}>
+              {photoType === "after" ? "Tap to take a photo" : "Tap to select or take a photo"}
+            </Text>
           </View>
         )}
       </TouchableOpacity>

@@ -9,10 +9,13 @@ import {
   ActivityIndicator,
   ScrollView,
   Alert,
+  TouchableOpacity,
 } from "react-native";
 
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import {
   Colors,
@@ -35,8 +38,10 @@ import { useAuth } from "../context/AuthContext";
 import { useTask } from "../context/TaskContext";
 import { getStaffProfileService } from "../services/auth.service";
 import { formatDate } from "../utils/date";
+import { ProfileStackParamList } from "../types/navigation";
 
 export default function ProfileScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
   const { user, logout, setUser } = useAuth();
   const { tasks } = useTask();
   const [profileUser, setProfileUser] = useState(user);
@@ -133,6 +138,8 @@ export default function ProfileScreen() {
     { icon: "information-circle-outline", label: "Version", value: "1.0.0" },
   ];
 
+  const handleViewRatings = () => navigation.navigate("Ratings");
+
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
@@ -180,6 +187,31 @@ export default function ProfileScreen() {
 
         {/* CONTENT */}
         <View style={styles.section}>
+          <SectionCard >
+            <TouchableOpacity
+              style={styles.profileMenuButton}
+              onPress={handleViewRatings}
+              activeOpacity={0.7}
+            >
+              <View style={styles.profileMenuRow}>
+                <View style={styles.menuIconWrap}>
+                  <Ionicons name="star-outline" size={20} color={Colors.primary700} />
+                </View>
+                <View style={styles.menuTextWrap}>
+                  <Text style={styles.menuRowTitle}>My Ratings</Text>
+                  <Text style={styles.menuRowSubtitle}>
+                    View ratings from customers
+                  </Text>
+                </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={Colors.gray300}
+                />
+              </View>
+            </TouchableOpacity>
+          </SectionCard>
+
           <SectionCard title="Personal Information">
             <InfoRow
               iconType="ion"
@@ -374,5 +406,210 @@ const styles = StyleSheet.create({
     fontSize: Typography.sm,
     color: Colors.gray400,
     marginRight: 6,
+  },
+
+  profileMenuButton: {
+    borderRadius: BorderRadius.lg,
+    backgroundColor: Colors.white,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+
+  profileMenuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  menuIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.primary100,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  menuTextWrap: {
+    flex: 1,
+  },
+
+  menuRowTitle: {
+    fontSize: Typography.base,
+    fontWeight: "700",
+    color: Colors.gray800,
+  },
+
+  menuRowSubtitle: {
+    marginTop: 4,
+    fontSize: Typography.sm,
+    color: Colors.gray500,
+  },
+
+  ratingCard: {
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.base,
+    shadowColor: Colors.gray900,
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 16,
+    elevation: 4,
+  },
+
+  ratingHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  ratingTitle: {
+    fontSize: Typography["3xl"],
+    fontWeight: "800",
+    color: Colors.primary800,
+  },
+
+  ratingStars: {
+    flexDirection: "row",
+    gap: 4,
+  },
+
+  ratingSubtext: {
+    marginTop: 10,
+    fontSize: Typography.sm,
+    color: Colors.gray500,
+  },
+
+  ratingMetrics: {
+    flexDirection: "row",
+    marginTop: 16,
+    justifyContent: "space-between",
+  },
+
+  metricItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+
+  metricValue: {
+    fontSize: Typography.xl,
+    fontWeight: "800",
+    color: Colors.primary800,
+  },
+
+  metricLabel: {
+    fontSize: Typography.sm,
+    color: Colors.gray500,
+    marginTop: 2,
+  },
+
+  distributionList: {
+    marginTop: 16,
+    gap: 10,
+  },
+
+  distributionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  distributionStar: {
+    width: 14,
+    fontSize: Typography.sm,
+    color: Colors.gray500,
+  },
+
+  distributionBarBg: {
+    flex: 1,
+    height: 6,
+    backgroundColor: Colors.gray200,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+
+  distributionBarFill: {
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: Colors.primary600,
+  },
+
+  distributionCount: {
+    width: 24,
+    fontSize: Typography.sm,
+    color: Colors.gray500,
+    textAlign: "right",
+  },
+
+  tagRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+
+  tagPill: {
+    backgroundColor: Colors.primary100,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: BorderRadius.full,
+  },
+
+  tagText: {
+    fontSize: Typography.sm,
+    color: Colors.primary700,
+    fontWeight: "600",
+  },
+
+  recentHeading: {
+    fontSize: Typography.base,
+    fontWeight: "700",
+    color: Colors.gray700,
+    marginBottom: 12,
+  },
+
+  reviewCard: {
+    backgroundColor: Colors.gray50,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.base,
+    marginTop: 10,
+  },
+
+  reviewHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+
+  reviewName: {
+    fontSize: Typography.sm,
+    fontWeight: "700",
+    color: Colors.gray800,
+    flex: 1,
+    marginRight: 12,
+  },
+
+  reviewStars: {
+    flexDirection: "row",
+    gap: 4,
+  },
+
+  reviewComment: {
+    marginTop: 10,
+    fontSize: Typography.sm,
+    color: Colors.gray600,
+    lineHeight: 20,
+  },
+
+  reviewDate: {
+    marginTop: 10,
+    fontSize: Typography.xs,
+    color: Colors.gray400,
+  },
+
+  noReviewsText: {
+    fontSize: Typography.sm,
+    color: Colors.gray500,
+    marginTop: 10,
   },
 });

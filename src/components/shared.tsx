@@ -75,8 +75,19 @@ export function KBSButton({
         />
       ) : (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          {/* {icon && <Text style={{ fontSize: size === 'sm' ? 14 : 16 }}>{icon}</Text>} */}
-          {icon && <View style={{ marginRight: 6 }}>{icon}</View>}
+          {icon &&
+            (typeof icon === "string" || typeof icon === "number" ? (
+              <Text
+                style={{
+                  marginRight: 6,
+                  fontSize: size === "sm" ? 14 : 16,
+                }}
+              >
+                {icon}
+              </Text>
+            ) : (
+              <View style={{ marginRight: 6 }}>{icon}</View>
+            ))}
           <Text style={textStyles}>{title}</Text>
         </View>
       )}
@@ -227,16 +238,14 @@ export function SectionCard({
   return (
     <View style={[cardStyles.card, style]}>
       {title && (
-        // <View style={cardStyles.header}>
-        //     {/* {icon && <View style={{ marginRight: 8 }}>{icon}</View>} */}
-        //   {/* <Text style={cardStyles.title}>{title}</Text> */}
-        //   {icon}
-        //     <Text style={cardStyles.title}>{title}</Text>
-        //   {headerRight}
-        // </View>
         <View style={cardStyles.header}>
           <View style={cardStyles.headerLeft}>
-            {icon}
+            {icon &&
+              (typeof icon === "string" || typeof icon === "number" ? (
+                <Text style={cardStyles.iconText}>{icon}</Text>
+              ) : (
+                icon
+              ))}
             <Text style={cardStyles.title}>{title}</Text>
           </View>
 
@@ -324,9 +333,16 @@ interface EmptyStateProps {
 }
 
 export function EmptyState({ icon, title, subtitle, action }: EmptyStateProps) {
+  const renderIcon = () =>
+    typeof icon === "string" || typeof icon === "number" ? (
+      <Text style={emptyStyles.icon}>{icon}</Text>
+    ) : (
+      icon
+    );
+
   return (
     <View style={emptyStyles.wrap}>
-      <View style={{ marginBottom: 16 }}>{icon}</View>
+      <View style={{ marginBottom: 16 }}>{renderIcon()}</View>
 
       <Text style={emptyStyles.title}>{title}</Text>
       {subtitle && <Text style={emptyStyles.subtitle}>{subtitle}</Text>}
@@ -476,6 +492,11 @@ const cardStyles = StyleSheet.create({
 
   headerRight: {
     marginLeft: "auto",
+  },
+  iconText: {
+    marginRight: 6,
+    fontSize: Typography.md,
+    color: Colors.primary900,
   },
   title: {
     marginLeft: 6,

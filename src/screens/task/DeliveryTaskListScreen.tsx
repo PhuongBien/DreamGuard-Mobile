@@ -62,7 +62,7 @@ export default function DeliveryTaskListScreen({ navigation }: Props) {
     return [...filtered].sort((a, b) => {
       const aTime = toTimestamp(a.dueDate, a.dueTime);
       const bTime = toTimestamp(b.dueDate, b.dueTime);
-      return aTime - bTime;
+      return bTime - aTime;
     });
   }, [selectedStatus, tasks]);
 

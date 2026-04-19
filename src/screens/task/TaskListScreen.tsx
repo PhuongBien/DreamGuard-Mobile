@@ -26,7 +26,7 @@ import {
 import { useTask } from "../../context/TaskContext";
 import { useAuth } from "../../context/AuthContext";
 import { formatVietnamAddress } from "../../utils/address";
-import { formatDate } from "../../utils/date";
+import { formatDate, formatTime } from "../../utils/date";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "TaskList">;
 
@@ -58,16 +58,85 @@ const STATUS_BADGES: Record<TaskStatus, { bg: string; text: string }> = {
   returned: { bg: "#FEE2E2", text: "#B91C1C" },
 };
 
-const STATUS_FILTERS: Array<{ value: TaskFilter; label: string }> = [
+type MainFilter = "all" | "pending" | "active" | "completed" | "cancelled";
+
+const MAIN_FILTERS: Array<{ value: MainFilter; label: string; hasSub?: boolean }> = [
   { value: "all", label: "All" },
-  { value: "pending", label: "Pending" },
-  { value: "checked_in", label: "Checked In" },
-  { value: "in_progress", label: "Processing" },
-  { value: "checked_out", label: "Checked Out" },
-  { value: "completed", label: "Completed" },
-  { value: "cancelled", label: "Cancelled" },
-  { value: "on_hold", label: "On Hold" },
+  { value: "pending", label: "Pending ▾", hasSub: true },
+  { value: "active", label: "Active ▾", hasSub: true },
+  { value: "completed", label: "Done" },
+  { value: "cancelled", label: "Canceled" },
 ];
+
+const SUB_FILTERS: Record<"pending" | "active", Array<{ value: TaskStatus; label: string }>> = {
+  pending: [
+    { value: "pending", label: "Pending" },
+    { value: "on_hold", label: "On hold" },
+  ],
+  active: [
+    { value: "checked_in", label: "Checked in" },
+    { value: "in_progress", label: "In Progress" },
+    { value: "checked_out", label: "Checked out" },
+  ],
+};
+
+const GROUP_STATUS_MAP: Record<MainFilter, TaskStatus[]> = {
+  all: [
+    "pending",
+    "delivering",
+    "arrived",
+    "checked_in",
+    "in_progress",
+    "checked_out",
+    "delivered",
+    "returned",
+    "completed",
+    "cancelled",
+    "on_hold",
+  ],
+  pending: ["pending", "on_hold"],
+  active: ["checked_in", "in_progress", "checked_out"],
+  completed: ["completed"],
+  cancelled: ["cancelled"],
+};
+
+function getFilterLabel(filter: MainFilter, subStatus: TaskStatus | null) {
+  if (subStatus) {
+    switch (subStatus) {
+      case "checked_in":
+        return "Checked in";
+      case "in_progress":
+        return "In Progress";
+      case "checked_out":
+        return "Checked out";
+      case "on_hold":
+        return "On hold";
+      case "pending":
+        return "Pending";
+      case "completed":
+        return "Done";
+      case "cancelled":
+        return "Canceled";
+      default:
+        return STATUS_LABELS[subStatus] || "Filtered";
+    }
+  }
+
+  switch (filter) {
+    case "all":
+      return "All";
+    case "pending":
+      return "Pending";
+    case "active":
+      return "Active";
+    case "completed":
+      return "Done";
+    case "cancelled":
+      return "Canceled";
+    default:
+      return "Filtered";
+  }
+}
 
 export default function TaskListScreen({ navigation }: Props) {
   const { tasks, refreshTasks } = useTask();
@@ -75,51 +144,59 @@ export default function TaskListScreen({ navigation }: Props) {
 
   const [refreshing, setRefreshing] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const [selectedStatus, setSelectedStatus] = useState<TaskFilter>("all");
+  const [selectedGroup, setSelectedGroup] = useState<MainFilter>("all");
+  const [selectedSubStatus, setSelectedSubStatus] = useState<TaskStatus | null>(null);
+  const [openSubGroup, setOpenSubGroup] = useState<"pending" | "active" | null>(null);
 
-  const myTasks = useMemo(() => {
-    if (selectedStatus === "all") return tasks;
-    return tasks.filter((task) => task.status === selectedStatus);
-  }, [tasks, selectedStatus]);
+  const filteredTasks = useMemo(() => {
+    if (!showAll) return tasks;
+
+    if (selectedGroup === "all") return tasks;
+
+    const groupStatuses = GROUP_STATUS_MAP[selectedGroup];
+    const statuses = selectedSubStatus ? [selectedSubStatus] : groupStatuses;
+
+    return tasks.filter((task) => statuses.includes(task.status));
+  }, [tasks, showAll, selectedGroup, selectedSubStatus]);
 
   const stats = useMemo(() => {
-    const total = myTasks.length;
-    const done = myTasks.filter((task) => task.status === "completed").length;
-    const doing = myTasks.filter(
-      (task) => task.status === "in_progress",
-    ).length;
-    const high = myTasks.filter(
+    const total = tasks.length;
+    const done = tasks.filter((task) => task.status === "completed").length;
+    const doing = tasks.filter((task) => task.status === "in_progress").length;
+    const high = tasks.filter(
       (task) =>
         (task.priority || "medium") === "high" ||
         (task.priority || "medium") === "urgent",
     ).length;
     return { total, done, doing, high };
-  }, [myTasks]);
+  }, [tasks]);
 
   const orderedTasks = useMemo(() => {
-    const copy = [...myTasks];
+    const copy = [...filteredTasks];
 
     copy.sort((a, b) => {
       const aDate = normalizeDateTime(a.dueDate, a.dueTime).getTime();
       const bDate = normalizeDateTime(b.dueDate, b.dueTime).getTime();
-      return aDate - bDate;
+      return bDate - aDate;
     });
 
     return copy;
-  }, [myTasks]);
+  }, [filteredTasks]);
 
   const visibleTasks = showAll ? orderedTasks : orderedTasks.slice(0, 3);
 
+  const displayTasks = visibleTasks;
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await refreshTasks({ status: selectedStatus });
+    await refreshTasks({ status: "all" });
     setRefreshing(false);
-  }, [refreshTasks, selectedStatus]);
+  }, [refreshTasks]);
 
   useFocusEffect(
     useCallback(() => {
-      refreshTasks({ status: selectedStatus });
-    }, [refreshTasks, selectedStatus]),
+      refreshTasks({ status: "all" });
+    }, [refreshTasks]),
   );
 
   const renderTask = ({ item }: { item: Task }) => {
@@ -129,7 +206,7 @@ export default function TaskListScreen({ navigation }: Props) {
     const badge = STATUS_BADGES[item.status] || STATUS_BADGES.pending;
     const priority = item.priority || "medium";
     const displayAddress =
-      formatVietnamAddress(item.customer.address) || "Chưa có địa chỉ";
+      formatVietnamAddress(item.customer.address) || "No address available";
 
     const priorityDot =
       priority === "high" || priority === "urgent" ? "#E54848" : "#E9A522";
@@ -183,7 +260,7 @@ export default function TaskListScreen({ navigation }: Props) {
           <View style={styles.metaRow}>
             <Ionicons name="time-outline" size={14} color={Colors.primary700} />
             <Text style={styles.metaText}>
-              {formatDateTimeDisplay(item.dueDate)}
+              {formatDateTimeDisplay(item.dueDate, item.dueTime)}
             </Text>
           </View>
 
@@ -202,19 +279,16 @@ export default function TaskListScreen({ navigation }: Props) {
       <StatusBar barStyle="light-content" backgroundColor={Colors.primary700} />
 
       <View style={styles.hero}>
-        <View style={styles.helloRow}>
-          <View>
-            <Text style={styles.helloText}>Hello,</Text>
-            <Text style={styles.userName}>
-              {user?.name || user?.fullName || user?.phoneNumber || "Employee"}
-            </Text>
-          </View>
+        <Text style={styles.heroEyebrow}>Cleaning Staff</Text>
+        <Text style={styles.heroTitle}>{user?.name || user?.fullName || "Staff"}</Text>
+        <Text style={styles.heroSubTitle}>
+          View assigned tasks, check details, and update task status.
+        </Text>
 
-          <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>
-              {getInitial(user?.name || user?.fullName || user?.phoneNumber)}
-            </Text>
-          </View>
+        <View style={styles.statRow}>
+          <StatCard label="Total Tasks" value={stats.total} />
+          <StatCard label="Completed" value={stats.done} />
+          <StatCard label="In Progress" value={stats.doing} />
         </View>
       </View>
 
@@ -222,55 +296,110 @@ export default function TaskListScreen({ navigation }: Props) {
         <View>
           <Text style={styles.sectionTitle}>Upcoming Tasks</Text>
           <Text style={styles.sectionSubTitle}>
-            {selectedStatus === "all"
-              ? `Showing ${orderedTasks.length} tasks`
-              : `${STATUS_FILTERS.find((item) => item.value === selectedStatus)?.label || "Filtered"} · ${orderedTasks.length}`}
+            {showAll
+              ? `${getFilterLabel(selectedGroup, selectedSubStatus)} · ${orderedTasks.length}`
+              : `Showing ${visibleTasks.length} tasks`}
           </Text>
         </View>
         <TouchableOpacity
-          onPress={() => setShowAll((prev) => !prev)}
+          onPress={() => {
+            if (showAll) {
+              setSelectedGroup("all");
+              setSelectedSubStatus(null);
+              setOpenSubGroup(null);
+            }
+            setShowAll((prev) => !prev);
+          }}
           activeOpacity={0.85}
         >
           <Text style={styles.sectionAction}>{showAll ? "Collapse" : "See all"}</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.filterBarWrap}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterContainer}
-        >
-          {STATUS_FILTERS.map((option) => {
-            const active = selectedStatus === option.value;
-            return (
-              <TouchableOpacity
-                key={option.value}
-                style={[styles.filterChip, active && styles.filterChipActive]}
-                activeOpacity={0.85}
-                onPress={() => {
-                  setSelectedStatus(option.value);
-                  setShowAll(false);
-                }}
-              >
-                <Text
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                  style={[
-                    styles.filterChipText,
-                    active && styles.filterChipTextActive,
-                  ]}
+      {showAll && (
+        <View style={styles.filterBarWrap}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterContainer}
+          >
+            {MAIN_FILTERS.map((option) => {
+              const active = selectedGroup === option.value;
+              return (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.filterChip, active && styles.filterChipActive]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    if (option.hasSub) {
+                      const nextOpen = openSubGroup === option.value ? null : option.value;
+                      setOpenSubGroup(nextOpen as "pending" | "active" | null);
+                      setSelectedGroup(option.value);
+                      if (nextOpen !== option.value) {
+                        setSelectedSubStatus(null);
+                      }
+                    } else {
+                      setSelectedGroup(option.value);
+                      setSelectedSubStatus(null);
+                      setOpenSubGroup(null);
+                    }
+                  }}
                 >
-                  {option.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
+                  <Text
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                    style={[
+                      styles.filterChipText,
+                      active && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {(openSubGroup === "pending" || openSubGroup === "active") && (
+            <View style={styles.subFilterBarWrap}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterContainer}
+              >
+                {SUB_FILTERS[openSubGroup].map((option) => {
+                  const active = selectedSubStatus === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[styles.subFilterChip, active && styles.filterChipActive]}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        setSelectedGroup(openSubGroup);
+                        setSelectedSubStatus(option.value);
+                      }}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                        style={[
+                          styles.filterChipText,
+                          active && styles.filterChipTextActive,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+        </View>
+      )}
 
       <FlatList
-        data={visibleTasks}
+        data={displayTasks}
         keyExtractor={(item) => item.id}
         renderItem={renderTask}
         contentContainerStyle={styles.listContent}
@@ -300,18 +429,9 @@ export default function TaskListScreen({ navigation }: Props) {
   );
 }
 
-function StatItem({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: number;
-  icon: keyof typeof Ionicons.glyphMap;
-}) {
+function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <View style={styles.statItem}>
-      <Ionicons name={icon} size={16} color={Colors.gray100} />
+    <View style={styles.statCard}>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
@@ -336,9 +456,16 @@ function normalizeDateTime(dateText?: string, timeText?: string) {
   return parsed;
 }
 
-function formatDateTimeDisplay(dateText?: string) {
+function formatDateTimeDisplay(dateText?: string, timeText?: string) {
   if (!dateText) return "--/--/----";
-  return formatDate(dateText);
+  const date = formatDate(dateText);
+  if (timeText && /^\d{2}:\d{2}$/.test(timeText)) {
+    return `${date} • ${timeText}`;
+  }
+  if (timeText) {
+    return `${date} • ${formatTime(timeText)}`;
+  }
+  return date;
 }
 
 function getInitial(name?: string) {
@@ -375,67 +502,53 @@ const styles = StyleSheet.create({
   },
   hero: {
     backgroundColor: Colors.primary900,
-    borderBottomLeftRadius: 26,
-    borderBottomRightRadius: 26,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
     paddingHorizontal: Spacing.base,
-    paddingTop: Spacing["4xl"],
-    paddingBottom: Spacing.base,
+    paddingTop: Spacing.xl,
+    paddingBottom: Spacing.lg,
     ...Shadow.base,
   },
-  helloRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: Spacing.base,
-  },
-  helloText: {
+  heroEyebrow: {
     color: Colors.primary100,
-    fontSize: Typography.md,
-    marginBottom: 4,
+    fontSize: Typography.sm,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
   },
-  userName: {
+  heroTitle: {
+    marginTop: 6,
+    color: Colors.white,
+    fontSize: Typography["2xl"],
+    fontWeight: "700",
+  },
+  heroSubTitle: {
+    marginTop: 8,
+    color: "#D8E7FA",
+    fontSize: Typography.base,
+    lineHeight: 22,
+  },
+  statRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: Spacing.base,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+  },
+  statValue: {
     color: Colors.white,
     fontSize: Typography.xl,
     fontWeight: "700",
   },
-  avatarCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: {
-    color: Colors.white,
-    fontWeight: "700",
-    fontSize: Typography.md,
-  },
-  statsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  statItem: {
-    flex: 1,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: "center",
-    minHeight: 74,
-  },
-  statValue: {
-    color: Colors.white,
-    fontWeight: "800",
-    fontSize: 30,
-    lineHeight: 34,
-    marginTop: 4,
-  },
   statLabel: {
+    marginTop: 4,
     color: Colors.primary100,
     fontSize: Typography.sm,
-    marginTop: 2,
-    textAlign: "center",
   },
   sectionHeader: {
     marginTop: Spacing.base,
@@ -447,14 +560,14 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: "#122B52",
-    fontSize: Typography.xl,
+    fontSize: Typography.lg,
     fontWeight: "700",
   },
   sectionSubTitle: {
     marginTop: 2,
     color: "#4C668A",
-    fontSize: Typography.sm,
-    fontWeight: "500",
+    fontSize: Typography.xs,
+    fontWeight: "400",
   },
   sectionAction: {
     color: Colors.primary500,
@@ -464,14 +577,14 @@ const styles = StyleSheet.create({
   filterBarWrap: {
     marginHorizontal: Spacing.base,
     marginBottom: Spacing.sm,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#D7E1ED",
-    backgroundColor: "#F7FAFD",
+    // borderRadius: 14,
+    // borderWidth: 1,
+    // borderColor: "#D7E1ED",
+    // backgroundColor: "#F7FAFD",
   },
   filterContainer: {
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    paddingHorizontal: 2,
+    paddingVertical: 9,
     alignItems: "center",
   },
   filterChip: {
@@ -481,6 +594,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 999,
     backgroundColor: "#E7EDF4",
+    borderWidth: 1,
+    borderColor: "#D2DDEB",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 8,
+    alignSelf: "center",
+  },
+  subFilterBarWrap: {
+    marginTop: -3,
+    marginLeft: 10,
+    marginRight: Spacing.base,
+    borderRadius: 999,
+    paddingVertical: 6,
+    // backgroundColor: "rgba(57, 106, 213, 0.06)",
+  },
+  subFilterChip: {
+    height: 32,
+    minHeight: 32,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: "#F3F7FD",
     borderWidth: 1,
     borderColor: "#D2DDEB",
     justifyContent: "center",
@@ -527,7 +661,7 @@ const styles = StyleSheet.create({
   },
   typeLabel: {
     color: "#31527B",
-    fontSize: Typography.md,
+    fontSize: Typography.sm,
     fontWeight: "500",
     maxWidth: 150,
     flexShrink: 1,
@@ -545,16 +679,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   statusBadgeText: {
-    fontSize: Typography.sm,
+    fontSize: Typography.xs,
     fontWeight: "600",
-    lineHeight: 16,
+    lineHeight: 14,
   },
   taskTitle: {
     color: "#1F3C65",
-    fontSize: Typography.xl,
-    fontWeight: "700",
-    marginTop: 12,
-    marginBottom: 12,
+    fontSize: Typography.lg,
+    fontWeight: "600",
+    marginTop: 10,
+    marginBottom: 10,
   },
   metaRow: {
     flexDirection: "row",
@@ -569,7 +703,8 @@ const styles = StyleSheet.create({
   },
   metaText: {
     color: "#3A5C8F",
-    fontSize: Typography.base,
+    fontSize: Typography.sm,
+    fontWeight: "500",
     flexShrink: 1,
   },
   emptyWrap: {

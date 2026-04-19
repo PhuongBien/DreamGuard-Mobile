@@ -361,6 +361,7 @@ export const updateShippingTaskDelivering = (
 export const updateShippingTaskArrived = (taskId: string) =>
   apiFetch<Task>(`/api/ShippingTasks/${taskId}/arrived`, {
     method: "PUT",
+    body: JSON.stringify({}),
   });
 
 export const updateShippingTaskDelivered = (

@@ -310,7 +310,7 @@ const normalizeProducts = (taskId: string, raw: Record<string, any>) => {
       quantity: Number(item?.quantity ?? 1) || 1,
       description:
         unitPrice !== undefined
-          ? `${unitPrice.toLocaleString("vi-VN")} ₫`
+          ? `${new Intl.NumberFormat("en-US").format(unitPrice)} ₫`
           : undefined,
     };
   });
@@ -366,7 +366,7 @@ const mergeOrderIntoTask = (task: Task, payload: unknown): Task => {
           toNumberOrUndefined(
             item?.totalAmount ?? item?.price ?? item?.unitPrice,
           ) !== undefined
-            ? `${Number(item?.totalAmount ?? item?.price ?? item?.unitPrice).toLocaleString("vi-VN")} ₫`
+            ? `${new Intl.NumberFormat("en-US").format(Number(item?.totalAmount ?? item?.price ?? item?.unitPrice))} ₫`
             : undefined,
       }))
     : task.products;

@@ -25,8 +25,12 @@ export type MainTabParamList = {
   Tasks: undefined;
   Schedule: undefined;
   Notifications: undefined;
-  Ratings: undefined;
   Profile: undefined;
+};
+
+export type ProfileStackParamList = {
+  ProfileHome: undefined;
+  Ratings: undefined;
 };
 
 /**
