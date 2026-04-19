@@ -59,6 +59,13 @@ const NEXT_STATUSES: Record<TaskStatus, TaskStatus[]> = {
   returned: [],
 };
 
+function getNextStatuses(status: TaskStatus, taskType?: string): TaskStatus[] {
+  if (taskType === "cleaning" && status === "checked_out") {
+    return [];
+  }
+  return NEXT_STATUSES[status] || [];
+}
+
 const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string }> = {
   pending: { bg: "#F8B84A", text: "#1E293B" },
   checked_in: { bg: "#A3C4F3", text: "#1A3A6C" },
@@ -93,6 +100,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(false);
   const [taskRating, setTaskRating] = useState<Rating | null>(null);
+  const [showPhotoReminder, setShowPhotoReminder] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -285,7 +293,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       : task.status === "in_progress" && hasCheckedOut
         ? "checked_out"
         : task.status;
-  const nextStatuses = NEXT_STATUSES[effectiveStatus] || [];
+  const nextStatuses = getNextStatuses(effectiveStatus, task.type);
   const primaryNextStatus: TaskStatus | undefined = nextStatuses[0];
   const mapping = task.servicePackageMapping;
   const packageInfo = mapping?.servicePackage;
@@ -319,8 +327,11 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         await startProcessing(task.id);
       } else if (latestEffectiveStatus === "in_progress") {
         await checkOut(task.id);
+        setShowPhotoReminder(true);
       } else if (latestEffectiveStatus === "checked_out") {
-        await completeTask(task.id);
+        if (task.type !== "cleaning") {
+          await completeTask(task.id);
+        }
       }
     } catch (error) {
       const msg = (error as any)?.message || "Unable to update status.";
@@ -354,7 +365,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           </TouchableOpacity>
 
           <View style={styles.headerMetaRow}>
-            <Text style={styles.taskCode}>{task.taskCode}</Text>
+            <Text style={styles.taskCode}>TASK CODE: {task.taskCode}</Text>
             <View
               style={[
                 styles.statusPill,
@@ -411,7 +422,8 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           <View style={styles.infoRow}>
             <Ionicons name="time-outline" size={18} color={Colors.primary500} />
             <Text style={styles.infoText}>
-              {formatSchedule(task.dueDate)}
+              {formatDate(task.dueDate)}
+              {task.dueTime ? ` • ${formatTaskTime(task.dueTime)}` : ""}
             </Text>
           </View>
 
@@ -589,6 +601,15 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
               </TouchableOpacity>
             )}
           </View>
+
+          {showPhotoReminder && !photoList.some(photo => photo.type === "after") && (
+            <View style={styles.photoReminder}>
+              <Ionicons name="camera" size={20} color={Colors.primary500} />
+              <Text style={styles.photoReminderText}>
+                Please take a photo after completing the order.
+              </Text>
+            </View>
+          )}
         </View>
 
         {canViewTaskRating && !!taskRating && (
@@ -657,14 +678,20 @@ function getActionLabel(status: TaskStatus): string {
     case "pending":
       return "Check-in";
     case "checked_in":
-      return "Nhận việc / Bắt đầu";
+      return "Get the task / Start";
     case "in_progress":
       return "Check-out";
     case "checked_out":
-      return "Hoàn thành";
+      return "Complete";
     default:
       return "";
   }
+}
+
+function formatTaskTime(value?: string | null): string {
+  if (!value) return "--:--";
+  if (/^\d{2}:\d{2}$/.test(value)) return value;
+  return formatTime(value);
 }
 
 function formatSchedule(dueDate?: string) {
@@ -673,7 +700,7 @@ function formatSchedule(dueDate?: string) {
 
 function formatCurrency(value?: number) {
   if (value === undefined || value === null) return "-";
-  return `${value.toLocaleString("vi-VN")} VND`;
+  return `${new Intl.NumberFormat("en-US").format(value)} VND`;
 }
 
 function formatDuration(value?: number) {
@@ -947,6 +974,23 @@ const styles = StyleSheet.create({
   photoImage: {
     width: "100%",
     height: "100%",
+  },
+  photoReminder: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: Spacing.sm,
+    padding: Spacing.sm,
+    backgroundColor: "#E0F2FE",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#0284C7",
+  },
+  photoReminderText: {
+    color: "#0284C7",
+    fontSize: Typography.base,
+    fontWeight: "500",
+    flex: 1,
   },
   bottomActionWrapper: {
     position: "absolute",

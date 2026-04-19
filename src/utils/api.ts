@@ -7,6 +7,10 @@ import {
   TaskStatus,
   User,
   Notification,
+  TradeInOrder,
+  TradeInOrderStatus,
+  TradeInOrderListParams,
+  TradeInOrderSearchParams,
 } from "../types";
 
 // CONFIG
@@ -361,6 +365,7 @@ export const updateShippingTaskDelivering = (
 export const updateShippingTaskArrived = (taskId: string) =>
   apiFetch<Task>(`/api/ShippingTasks/${taskId}/arrived`, {
     method: "PUT",
+    body: JSON.stringify({}),
   });
 
 export const updateShippingTaskDelivered = (
@@ -687,3 +692,108 @@ export const registerDeviceToken = (
 
 export const fetchSchedule = (startDate: string, endDate: string) =>
   apiFetch<Task[]>(`/tasks/schedule?startDate=${startDate}&endDate=${endDate}`);
+
+// TRADE-IN ORDER API
+
+//  [API: GET /api/TradeInOrders/waiting-orders]
+
+export const fetchTradeInWaitingOrders = (params: TradeInOrderListParams = {}) => {
+  const query = new URLSearchParams();
+  const pageNumber = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
+
+  query.append("pageNumber", String(pageNumber));
+  query.append("pageSize", String(pageSize));
+  if (params.status && params.status !== "all")
+    query.append("status", params.status);
+
+  const queryString = query.toString();
+
+  return apiFetch<PaginatedResponse<TradeInOrder>>(
+    queryString
+      ? `/api/TradeInOrders/waiting-orders?${queryString}`
+      : "/api/TradeInOrders/waiting-orders",
+  );
+};
+
+//  [API: GET /api/TradeInOrders/AdminSearchTradeInOrder]
+
+export const searchTradeInOrders = (params: TradeInOrderSearchParams = {}) => {
+  const query = new URLSearchParams();
+
+  if (params.status) query.append("status", params.status);
+  if (params.orderCode) query.append("orderCode", params.orderCode);
+  if (params.customerPhone) query.append("customerPhone", params.customerPhone);
+  if (params.pageNumber) query.append("pageNumber", String(params.pageNumber));
+  if (params.pageSize) query.append("pageSize", String(params.pageSize));
+
+  const queryString = query.toString();
+
+  return apiFetch<PaginatedResponse<TradeInOrder>>(
+    queryString
+      ? `/api/TradeInOrders/AdminSearchTradeInOrder?${queryString}`
+      : "/api/TradeInOrders/AdminSearchTradeInOrder",
+  );
+};
+
+//  [API: GET /api/TradeInOrders/:tradeInOrderId]
+
+export const fetchTradeInOrderById = (tradeInOrderId: string) =>
+  apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}`);
+
+//  [API: PATCH /api/TradeInOrders/:tradeInOrderId/processing]
+
+export const updateTradeInOrderProcessing = (tradeInOrderId: string, notes?: string) =>
+  apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}/processing`, {
+    method: "PATCH",
+    body: JSON.stringify(notes ? { notes } : {}),
+  });
+
+//  [API: PATCH /api/TradeInOrders/:tradeInOrderId/delivered]
+
+export const updateTradeInOrderDelivered = (tradeInOrderId: string, notes?: string) =>
+  apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}/delivered`, {
+    method: "PATCH",
+    body: JSON.stringify(notes ? { notes } : {}),
+  });
+
+//  [API: PATCH /api/TradeInOrders/:tradeInOrderId/completed]
+
+export const updateTradeInOrderCompleted = (tradeInOrderId: string, notes?: string) =>
+  apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}/completed`, {
+    method: "PATCH",
+    body: JSON.stringify(notes ? { notes } : {}),
+  });
+
+//  [API: PATCH /api/TradeInOrders/:tradeInOrderId/admin-cancel]
+
+export const cancelTradeInOrder = (tradeInOrderId: string, reason?: string) =>
+  apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}/admin-cancel`, {
+    method: "PATCH",
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+
+//  [API: POST /api/TradeInOrders/:tradeInOrderId/upload-image]
+
+export const uploadTradeInOrderImage = (
+  tradeInOrderId: string,
+  imageUri: string,
+  imageType?: string,
+) => {
+  const formData = new FormData();
+  
+  formData.append("file", {
+    uri: imageUri,
+    type: "image/jpeg",
+    name: `trade-in-${tradeInOrderId}-${Date.now()}.jpg`,
+  } as any);
+
+  if (imageType) {
+    formData.append("type", imageType);
+  }
+
+  return apiUpload<TradeInOrder>(
+    `/api/TradeInOrders/${tradeInOrderId}/upload-image`,
+    formData,
+  );
+};

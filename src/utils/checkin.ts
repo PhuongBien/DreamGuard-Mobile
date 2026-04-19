@@ -58,7 +58,7 @@ export function createCheckInPayload(
   longitude?: number
 ): CheckInPayload {
   if (!address) {
-    throw new Error("Địa chỉ check-in không hợp lệ");
+    throw new Error("Invalid check-in address");
   }
 
   return {

@@ -74,7 +74,7 @@ export function isToday(input?: string | Date | null): boolean {
 }
 
 /**
- * Return relative time (e.g., "5 phút trước", "2 giờ trước")
+ * Return relative time (e.g., "5 minutes ago", "2 hours ago")
  */
 export function timeAgo(input?: string | Date | null): string {
   const date = parseDate(input);
@@ -86,10 +86,10 @@ export function timeAgo(input?: string | Date | null): string {
   const diffHours = Math.floor(diffMinutes / 60);
   const diffDays = Math.floor(diffHours / 24);
 
-  if (diffSeconds < 60) return "Vừa xong";
-  if (diffMinutes < 60) return `${diffMinutes} phút trước`;
-  if (diffHours < 24) return `${diffHours} giờ trước`;
-  if (diffDays < 7) return `${diffDays} ngày trước`;
+  if (diffSeconds < 60) return "Just now";
+  if (diffMinutes < 60) return `${diffMinutes} minutes ago`;
+  if (diffHours < 24) return `${diffHours} hours ago`;
+  if (diffDays < 7) return `${diffDays} days ago`;
 
   return formatDate(date);
 }

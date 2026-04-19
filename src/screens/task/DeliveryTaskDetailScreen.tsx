@@ -23,7 +23,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useTask } from "../../context/TaskContext";
-import { Task, TaskStatus } from "../../types";
+import { Task, TaskStatus, TradeInOrder } from "../../types";
 import { TaskStackParamList } from "../../types/navigation";
 import {
   BorderRadius,
@@ -35,6 +35,8 @@ import {
 import { fetchPaymentByOrderId } from "../../utils/api";
 import { formatDate } from "../../utils/date";
 import { uploadImageToCloudinary } from "../../utils/cloudinary";
+import { TradeInOrderService } from "../../services/trade-in-order.service";
+import TradeInDetailScreen from "./TradeInDetailScreen";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "TaskDetail">;
 
@@ -152,7 +154,13 @@ const extractPaymentInfo = (payload: unknown): PaymentInfo => {
 };
 
 export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
-  const { taskId } = route.params;
+  const { taskId, type } = route.params;
+  
+  // If type is "tradein", render the TradeIn-specific screen
+  if (type === "tradein") {
+    return <TradeInDetailScreen route={route} navigation={navigation} />;
+  }
+
   const { tasks, getTaskById, startDelivery, markArrived, addTaskPhoto } =
     useTask();
 
@@ -289,9 +297,19 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
             })),
         ],
       },
-    ].filter((section) => section.items.length > 0);
+    ];
 
-    return sections;
+    const seenUrls = new Set<string>();
+    return sections
+      .map((section) => ({
+        ...section,
+        items: section.items.filter((item) => {
+          if (!item.url || seenUrls.has(item.url)) return false;
+          seenUrls.add(item.url);
+          return true;
+        }),
+      }))
+      .filter((section) => section.items.length > 0);
   }, [task]);
 
   const timelineEntries = useMemo(() => {
@@ -424,6 +442,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     try {
       setActionLoading(true);
       await markArrived(task.id);
+      await getTaskById(task.id, { forceRefresh: true });
     } catch (error: any) {
       Alert.alert("Cannot update", error?.message || "Cannot mark as arrived.");
     } finally {
@@ -925,7 +944,7 @@ function getStatusBadgeTextStyle(status: TaskStatus) {
 }
 
 function formatSchedule(task: Task) {
-  if (!task.appointmentDateRaw && !task.dueDate) return "Chưa có lịch giao";
+  if (!task.appointmentDateRaw && !task.dueDate) return "No delivery schedule";
   const dateText = formatDate(task.dueDate);
   return task.dueTime ? `${dateText} • ${task.dueTime}` : dateText;
 }
@@ -943,7 +962,7 @@ function formatDateTimeDisplay(value?: string) {
 
 function formatCurrency(value?: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
-  return `${value.toLocaleString("vi-VN")} ₫`;
+  return `${new Intl.NumberFormat("en-US").format(value)} ₫`;
 }
 
 const styles = StyleSheet.create({

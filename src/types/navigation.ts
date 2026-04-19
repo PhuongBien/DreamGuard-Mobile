@@ -25,8 +25,12 @@ export type MainTabParamList = {
   Tasks: undefined;
   Schedule: undefined;
   Notifications: undefined;
-  Ratings: undefined;
   Profile: undefined;
+};
+
+export type ProfileStackParamList = {
+  ProfileHome: undefined;
+  Ratings: undefined;
 };
 
 /**
@@ -34,7 +38,7 @@ export type MainTabParamList = {
  */
 export type TaskStackParamList = {
   TaskList: undefined;
-  TaskDetail: { taskId: string };
+  TaskDetail: { taskId: string; type?: "task" | "tradein" };
   PhotoUpload: { taskId: string; photoType: "before" | "after" };
   DeliveryPhotoCapture: { taskId: string; mode: "delivered" | "returned" };
   CheckInOut: { taskId: string };
