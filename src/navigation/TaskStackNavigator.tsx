@@ -9,11 +9,12 @@ import { TaskStackParamList } from "../types/navigation";
 import TaskListScreen from "../screens/task/TaskListScreen";
 import TaskDetailScreen from "../screens/task/TaskDetailScreen";
 import CheckInOutScreen from "../screens/task/CheckInOutScreen";
-import {PhotoUploadScreen} from "../screens/task/PhotoUploadScreen";
+import { PhotoUploadScreen } from "../screens/task/PhotoUploadScreen";
 import AddNoteScreen from "../screens/task/AddNoteScreen";
 import DeliveryTaskListScreen from "../screens/task/DeliveryTaskListScreen";
 import DeliveryTaskDetailScreen from "../screens/task/DeliveryTaskDetailScreen";
 import DeliveryPhotoCaptureScreen from "../screens/task/DeliveryPhotoCaptureScreen";
+import TradeInDetailScreen from "../screens/task/TradeInDetailScreen";
 import { useAuth } from "../context/AuthContext";
 
 const Stack = createNativeStackNavigator<TaskStackParamList>();
@@ -38,7 +39,18 @@ export default function TaskStackNavigator() {
       {/* ================= TASK DETAIL ================= */}
       <Stack.Screen
         name="TaskDetail"
-        component={isDeliveryStaff ? DeliveryTaskDetailScreen : TaskDetailScreen}
+        component={
+          isDeliveryStaff ? DeliveryTaskDetailScreen : TaskDetailScreen
+        }
+        options={{
+          headerShown: false,
+        }}
+      />
+
+      {/* ================= TRADE IN DETAIL ================= */}
+      <Stack.Screen
+        name="TradeInDetail"
+        component={TradeInDetailScreen}
         options={{
           headerShown: false,
         }}

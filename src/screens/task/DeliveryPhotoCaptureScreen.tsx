@@ -16,7 +16,15 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { useTask } from "../../context/TaskContext";
 import { TaskStackParamList } from "../../types/navigation";
-import { BorderRadius, Colors, Spacing, Typography } from "../../constants/theme";
+import { uploadImageToCloudinary } from "../../utils/cloudinary";
+import { DeliveryTaskService } from "../../services/delivery-task.service";
+import { TradeInOrderService } from "../../services/trade-in-order.service";
+import {
+  BorderRadius,
+  Colors,
+  Spacing,
+  Typography,
+} from "../../constants/theme";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "DeliveryPhotoCapture">;
 
@@ -28,8 +36,11 @@ const FAILED_REASONS = [
   "Other reasons.",
 ];
 
-export default function DeliveryPhotoCaptureScreen({ route, navigation }: Props) {
-  const { taskId, mode } = route.params;
+export default function DeliveryPhotoCaptureScreen({
+  route,
+  navigation,
+}: Props) {
+  const { shippingTaskId, mode, tradeInFlow, tradeInOrderId } = route.params;
   const { markDelivered, markReturned, addTaskPhoto } = useTask();
 
   const [imageUris, setImageUris] = useState<string[]>([]);
@@ -46,7 +57,8 @@ export default function DeliveryPhotoCaptureScreen({ route, navigation }: Props)
       isReturnedMode
         ? {
             title: "Delivery failed.",
-            subtitle: "Select a reason and capture evidence before returning the item.",
+            subtitle:
+              "Select a reason and capture evidence before returning the item.",
             button: "Confirm failed delivery",
           }
         : {
@@ -62,7 +74,10 @@ export default function DeliveryPhotoCaptureScreen({ route, navigation }: Props)
       const permission = await ImagePicker.requestCameraPermissionsAsync();
 
       if (permission.status !== "granted") {
-        Alert.alert("Missing camera permission", "Camera permission is required to capture evidence.");
+        Alert.alert(
+          "Missing camera permission",
+          "Camera permission is required to capture evidence.",
+        );
         return;
       }
 
@@ -80,18 +95,27 @@ export default function DeliveryPhotoCaptureScreen({ route, navigation }: Props)
         });
       }
     } catch (error: any) {
-      Alert.alert("Cannot take photo", error?.message || "An error occurred while opening the camera.");
+      Alert.alert(
+        "Cannot take photo",
+        error?.message || "An error occurred while opening the camera.",
+      );
     }
   };
 
   const handleSubmit = async () => {
     if (!imageUris.length) {
-      Alert.alert("Missing evidence", "You need to capture a photo before confirming.");
+      Alert.alert(
+        "Missing evidence",
+        "You need to capture a photo before confirming.",
+      );
       return;
     }
 
     if (isReturnedMode && !finalReason) {
-      Alert.alert("Missing reason", "You need to select a reason for the failed delivery.");
+      Alert.alert(
+        "Missing reason",
+        "You need to select a reason for the failed delivery.",
+      );
       return;
     }
 
@@ -100,20 +124,47 @@ export default function DeliveryPhotoCaptureScreen({ route, navigation }: Props)
 
       const uploadedUrls: string[] = [];
 
-      for (const imageUri of imageUris) {
-        const uploadedUrl = await addTaskPhoto(taskId, {
-          url: imageUri,
-          type: "evidence",
-          uploadedBy: "delivery_staff",
-          captureStage: isReturnedMode ? "delivery_failed" : "delivery_success",
-        });
-        uploadedUrls.push(uploadedUrl);
-      }
-
-      if (isReturnedMode) {
-        await markReturned(taskId, finalReason, uploadedUrls);
+      if (tradeInFlow) {
+        for (const imageUri of imageUris) {
+          const uploadedUrl = await uploadImageToCloudinary(imageUri);
+          if (uploadedUrl) uploadedUrls.push(uploadedUrl);
+        }
+        if (!uploadedUrls.length) {
+          throw new Error("Could not upload evidence images.");
+        }
+        if (isReturnedMode) {
+          await DeliveryTaskService.markReturnedForTradeIn(
+            shippingTaskId,
+            finalReason,
+            uploadedUrls,
+          );
+        } else {
+          await DeliveryTaskService.markDeliveredForTradeIn(
+            shippingTaskId,
+            uploadedUrls,
+          );
+          if (tradeInOrderId) {
+            await TradeInOrderService.updateDelivered(tradeInOrderId);
+          }
+        }
       } else {
-        await markDelivered(taskId, uploadedUrls);
+        for (const imageUri of imageUris) {
+          const uploadedUrl = await addTaskPhoto(shippingTaskId, {
+            url: imageUri,
+            type: "evidence",
+            uploadedBy: "delivery_staff",
+            captureStage: isReturnedMode
+              ? "delivery_failed"
+              : "delivery_success",
+          });
+          uploadedUrls.push(uploadedUrl);
+        }
+
+        if (isReturnedMode) {
+          await markReturned(shippingTaskId, finalReason, uploadedUrls);
+        } else {
+          await markDelivered(shippingTaskId, uploadedUrls);
+        }
       }
 
       Alert.alert(
@@ -153,7 +204,12 @@ export default function DeliveryPhotoCaptureScreen({ route, navigation }: Props)
                   activeOpacity={0.85}
                   onPress={() => setReason(item)}
                 >
-                  <Text style={[styles.reasonText, active && styles.reasonTextActive]}>
+                  <Text
+                    style={[
+                      styles.reasonText,
+                      active && styles.reasonTextActive,
+                    ]}
+                  >
                     {item}
                   </Text>
                 </TouchableOpacity>
@@ -191,7 +247,9 @@ export default function DeliveryPhotoCaptureScreen({ route, navigation }: Props)
         ) : (
           <View style={styles.placeholderWrap}>
             <Ionicons name="camera-outline" size={40} color={Colors.gray400} />
-            <Text style={styles.placeholderTitle}>Capture using camera only</Text>
+            <Text style={styles.placeholderTitle}>
+              Capture using camera only
+            </Text>
             <Text style={styles.placeholderSubTitle}>
               Tap to open the camera. You can capture multiple evidence photos.
             </Text>
@@ -206,7 +264,9 @@ export default function DeliveryPhotoCaptureScreen({ route, navigation }: Props)
         onPress={takePhoto}
       >
         <Ionicons name="refresh-outline" size={16} color={Colors.primary700} />
-        <Text style={styles.retakeText}>{imageUris.length ? "Capture more photos" : "Open camera"}</Text>
+        <Text style={styles.retakeText}>
+          {imageUris.length ? "Capture more photos" : "Open camera"}
+        </Text>
       </TouchableOpacity>
 
       {imageUris.length ? (
@@ -222,7 +282,10 @@ export default function DeliveryPhotoCaptureScreen({ route, navigation }: Props)
       ) : null}
 
       <TouchableOpacity
-        style={[styles.submitButton, (!imageUris.length || loading) && styles.submitButtonDisabled]}
+        style={[
+          styles.submitButton,
+          (!imageUris.length || loading) && styles.submitButtonDisabled,
+        ]}
         activeOpacity={0.85}
         disabled={!imageUris.length || loading}
         onPress={handleSubmit}

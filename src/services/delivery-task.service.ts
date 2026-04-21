@@ -8,6 +8,10 @@ import {
   updateShippingTaskDelivered,
   updateShippingTaskDelivering,
   updateShippingTaskReturned,
+  updateShippingTaskDeliveringForTradeIn,
+  updateShippingTaskDeliveredForTradeIn,
+  updateShippingTaskReturnedForTradeIn,
+  updateShippingTaskForceCancelledForTradeIn,
 } from "../utils/api";
 import { uploadImageToCloudinary } from "../utils/cloudinary";
 
@@ -179,14 +183,27 @@ const pickTimelineAt = (raw: Record<string, any>, keys: string[]) => {
 const normalizeStatus = (value: unknown): TaskStatus => {
   const raw = String(value ?? "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/\s+/g, "");
 
+  if (raw === "pending") return "pending";
   if (raw === "delivering") return "delivering";
   if (raw === "arrived") return "arrived";
   if (raw === "delivered") return "delivered";
   if (raw === "returned" || raw === "returning" || raw === "failed") {
     return "returned";
   }
+  if (raw === "exchangerequested" || raw === "exchange_requested") {
+    return "exchange_requested";
+  }
+  if (raw === "cancelled" || raw === "canceled" || raw === "forcedcancelled") {
+    return "cancelled";
+  }
+  if (raw.includes("return")) return "returned";
+  if (raw.includes("exchange") && raw.includes("request")) {
+    return "exchange_requested";
+  }
+  if (raw.includes("cancel")) return "cancelled";
 
   return "pending";
 };
@@ -200,7 +217,6 @@ const mapEvidenceTypeToStage = (type?: string) => {
   return undefined;
 };
 const normalizePhotos = (taskId: string, payload: Record<string, any>) => {
-
   const photoSources: unknown[] = [
     ...(Array.isArray(payload.evidenceUrls) ? payload.evidenceUrls : []),
     ...(Array.isArray(payload.relatedImageUrls)
@@ -631,7 +647,7 @@ export const DeliveryTaskService = {
     const response = await updateShippingTaskDelivered(taskId, {
       evidenceUrls,
     });
-    
+
     return (
       (await hydrateTaskWithOrder(parseTask(response.data))) ??
       (await refreshDeliveryTask(taskId))
@@ -653,9 +669,72 @@ export const DeliveryTaskService = {
     );
   },
 
+  // Trade-in specific methods
+  async startDeliveringForTradeIn(
+    taskId: string,
+    evidenceUrls: string[] = [],
+  ): Promise<Task> {
+    const response = await updateShippingTaskDeliveringForTradeIn(taskId, {
+      evidenceUrls,
+    });
+    return (
+      (await hydrateTaskWithOrder(parseTask(response.data))) ??
+      (await refreshDeliveryTask(taskId))
+    );
+  },
+
+  async markDeliveredForTradeIn(
+    taskId: string,
+    evidenceUrls: string[] = [],
+  ): Promise<Task> {
+    const response = await updateShippingTaskDeliveredForTradeIn(taskId, {
+      evidenceUrls,
+    });
+    return (
+      (await hydrateTaskWithOrder(parseTask(response.data))) ??
+      (await refreshDeliveryTask(taskId))
+    );
+  },
+
+  async markReturnedForTradeIn(
+    taskId: string,
+    reason: string,
+    evidenceUrls: string[],
+  ): Promise<Task> {
+    const response = await updateShippingTaskReturnedForTradeIn(taskId, {
+      reason,
+      evidenceUrls,
+    });
+    return (
+      (await hydrateTaskWithOrder(parseTask(response.data))) ??
+      (await refreshDeliveryTask(taskId))
+    );
+  },
+
+  async markForcedCancelledForTradeIn(
+    taskId: string,
+    reason: string,
+    evidenceUrls: string[],
+  ): Promise<Task> {
+    const response = await updateShippingTaskForceCancelledForTradeIn(taskId, {
+      reason,
+      evidenceUrls,
+    });
+    return (
+      (await hydrateTaskWithOrder(parseTask(response.data))) ??
+      (await refreshDeliveryTask(taskId))
+    );
+  },
+
   async addPhoto(
     task: Task,
-    photo: TaskPhoto & { fileName?: string; mimeType?: string },
+    photo: {
+      id?: string;
+      url: string;
+      type?: string;
+      fileName?: string;
+      mimeType?: string;
+    },
   ): Promise<string> {
     return uploadImageToCloudinary(photo.url, {
       fileName:

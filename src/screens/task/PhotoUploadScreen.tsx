@@ -14,7 +14,12 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { TaskStackParamList } from "../../types/navigation";
 import { useTask } from "../../context/TaskContext";
-import { Colors, Spacing, Typography, BorderRadius } from "../../constants/theme";
+import {
+  Colors,
+  Spacing,
+  Typography,
+  BorderRadius,
+} from "../../constants/theme";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "PhotoUpload">;
 
@@ -24,7 +29,7 @@ const PHOTO_LABELS: Record<"before" | "after", string> = {
 };
 
 export const PhotoUploadScreen = ({ route, navigation }: Props) => {
-  const { taskId, photoType } = route.params;
+  const { shippingTaskId, photoType } = route.params;
   const { addTaskPhoto, getTaskById } = useTask();
 
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -36,7 +41,8 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
 
   const pickFromLibrary = async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
         // Alert.alert("Permission denied", "Permission to access the photo library is required.");
         return;
@@ -57,7 +63,10 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
         });
       }
     } catch (error: any) {
-      Alert.alert("Error selecting image", error?.message || "Unable to open image library.");
+      Alert.alert(
+        "Error selecting image",
+        error?.message || "Unable to open image library.",
+      );
     }
   };
 
@@ -84,7 +93,10 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
         });
       }
     } catch (error: any) {
-      Alert.alert("Error taking photo", error?.message || "Unable to open camera.");
+      Alert.alert(
+        "Error taking photo",
+        error?.message || "Unable to open camera.",
+      );
     }
   };
 
@@ -99,21 +111,24 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
           { text: "Take Photo", onPress: takePhoto },
           { text: "Library", onPress: pickFromLibrary },
           { text: "Cancel", style: "cancel" },
-        ]
+        ],
       );
     }
   };
 
   const handleUpload = async () => {
     if (!imageUri) {
-      Alert.alert("No Image Selected", "Please select or take a photo before uploading.");
+      Alert.alert(
+        "No Image Selected",
+        "Please select or take a photo before uploading.",
+      );
       return;
     }
 
     try {
       setLoading(true);
 
-      await addTaskPhoto(taskId, {
+      await addTaskPhoto(shippingTaskId, {
         url: imageUri,
         type: photoType,
         uploadedBy: "current_user",
@@ -121,7 +136,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
         mimeType: imageMeta?.mimeType,
       });
 
-      await getTaskById(taskId, { forceRefresh: true });
+      await getTaskById(shippingTaskId, { forceRefresh: true });
 
       Alert.alert("Success", "Photo has been uploaded.", [
         { text: "OK", onPress: () => navigation.goBack() },
@@ -152,7 +167,9 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
           <View style={styles.placeholderWrap}>
             <Ionicons name="camera-outline" size={40} color={Colors.gray400} />
             <Text style={styles.placeholder}>
-              {photoType === "after" ? "Tap to take a photo" : "Tap to select or take a photo"}
+              {photoType === "after"
+                ? "Tap to take a photo"
+                : "Tap to select or take a photo"}
             </Text>
           </View>
         )}
@@ -164,16 +181,17 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
           onPress={handleChooseImage}
           disabled={loading}
         >
-          <Ionicons name="refresh-outline" size={16} color={Colors.primary700} />
+          <Ionicons
+            name="refresh-outline"
+            size={16}
+            color={Colors.primary700}
+          />
           <Text style={styles.rePickText}>Choose another image</Text>
         </TouchableOpacity>
       )}
 
       <TouchableOpacity
-        style={[
-          styles.button,
-          (!imageUri || loading) && styles.buttonDisabled,
-        ]}
+        style={[styles.button, (!imageUri || loading) && styles.buttonDisabled]}
         onPress={handleUpload}
         disabled={!imageUri || loading}
         activeOpacity={0.85}

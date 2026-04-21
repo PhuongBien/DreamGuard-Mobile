@@ -1,5 +1,7 @@
 // Navigation Types
 
+import type { NavigatorScreenParams } from "@react-navigation/native";
+
 /**
  * Root navigator (AppNavigator)
  * Quyết định vào Auth hay Main
@@ -18,14 +20,15 @@ export type AuthStackParamList = {
   // ResetPassword: { phoneNumber: string };
 };
 
-/**
- * Bottom tab navigator
- */
-export type MainTabParamList = {
-  Tasks: undefined;
-  Schedule: undefined;
-  Notifications: undefined;
-  Profile: undefined;
+export type NotificationStackParamList = {
+  NotificationList: undefined;
+  NotificationDetail: {
+    notificationId: string;
+    actionType: string;
+    message: string;
+    createdAt: string;
+    isRead: boolean;
+  };
 };
 
 export type ProfileStackParamList = {
@@ -38,9 +41,48 @@ export type ProfileStackParamList = {
  */
 export type TaskStackParamList = {
   TaskList: undefined;
-  TaskDetail: { taskId: string; type?: "task" | "tradein" };
-  PhotoUpload: { taskId: string; photoType: "before" | "after" };
-  DeliveryPhotoCapture: { taskId: string; mode: "delivered" | "returned" };
-  CheckInOut: { taskId: string };
-  AddNote: { taskId: string };
+
+  TaskDetail: {
+    taskId?: string;
+    shippingTaskId?: string;
+    tradeInOrderId?: string;
+    orderId?: string;
+    type?: "task" | "tradein";
+  };
+
+  TradeInDetail: {
+    tradeInOrderId: string;
+    shippingTaskId?: string;
+  };
+
+  PhotoUpload: {
+    shippingTaskId: string;
+    photoType: "before" | "after";
+  };
+
+  DeliveryPhotoCapture: {
+    shippingTaskId: string;
+    mode: "delivered" | "returned";
+    /** Use trade-in shipping APIs + Cloudinary upload without TaskContext */
+    tradeInFlow?: boolean;
+    tradeInOrderId?: string;
+  };
+
+  CheckInOut: {
+    shippingTaskId: string;
+  };
+
+  AddNote: {
+    shippingTaskId: string;
+  };
+};
+
+/**
+ * Bottom tab navigator
+ */
+export type MainTabParamList = {
+  Tasks: NavigatorScreenParams<TaskStackParamList>;
+  Schedule: undefined;
+  Notifications: NavigatorScreenParams<NotificationStackParamList>;
+  Profile: NavigatorScreenParams<ProfileStackParamList>;
 };

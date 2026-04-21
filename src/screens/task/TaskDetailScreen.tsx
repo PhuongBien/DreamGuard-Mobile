@@ -15,12 +15,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
-import {
-  Colors,
-  Typography,
-  Spacing,
-  Shadow,
-} from "../../constants/theme";
+import { Colors, Typography, Spacing, Shadow } from "../../constants/theme";
 import { TaskStackParamList } from "../../types/navigation";
 import { Rating, TaskStatus } from "../../types";
 import { useTask } from "../../context/TaskContext";
@@ -43,6 +38,7 @@ const STATUS_TEXT: Record<TaskStatus, string> = {
   arrived: "Arrived",
   delivered: "Delivered",
   returned: "Returned",
+  exchange_requested: "Exchange Requested",
 };
 
 const NEXT_STATUSES: Record<TaskStatus, TaskStatus[]> = {
@@ -57,6 +53,7 @@ const NEXT_STATUSES: Record<TaskStatus, TaskStatus[]> = {
   arrived: [],
   delivered: [],
   returned: [],
+  exchange_requested: [],
 };
 
 function getNextStatuses(status: TaskStatus, taskType?: string): TaskStatus[] {
@@ -78,6 +75,7 @@ const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string }> = {
   arrived: { bg: "#E0F2FE", text: "#0369A1" },
   delivered: { bg: "#DCFCE7", text: "#166534" },
   returned: { bg: "#FEE2E2", text: "#B91C1C" },
+  exchange_requested: { bg: "#A6B1C6", text: Colors.white },
 };
 
 export default function TaskDetailScreen({ route, navigation }: Props) {
@@ -106,6 +104,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     let mounted = true;
 
     const loadTaskDetail = async () => {
+      if (!taskId) return;
       if (task) {
         return;
       }
@@ -129,6 +128,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
 
   useFocusEffect(
     useCallback(() => {
+      if (!taskId) return;
       getTaskById(taskId, { forceRefresh: true }).catch(() => undefined);
     }, [getTaskById, taskId]),
   );
@@ -137,7 +137,9 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     let cancelled = false;
 
     const normalizeKey = (value: unknown) =>
-      String(value ?? "").trim().toLowerCase();
+      String(value ?? "")
+        .trim()
+        .toLowerCase();
 
     const extractItems = (payload: any): any[] => {
       if (Array.isArray(payload)) return payload;
@@ -171,7 +173,8 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       }
 
       const baseTask =
-        task || (await getTaskById(taskId, { forceRefresh: true }));
+        task ||
+        (taskId ? await getTaskById(taskId, { forceRefresh: true }) : null);
 
       if (cancelled || !baseTask) {
         if (!cancelled) setTaskRating(null);
@@ -342,7 +345,10 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   };
 
   const handleOpenPhotoUpload = (type: "before" | "after") => {
-    navigation.navigate("PhotoUpload", { taskId: task.id, photoType: type });
+    navigation.navigate("PhotoUpload", {
+      shippingTaskId: task.id,
+      photoType: type,
+    });
   };
 
   return (
@@ -414,9 +420,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
               size={18}
               color={Colors.primary500}
             />
-            <Text style={styles.infoText}>
-              {displayAddress}
-            </Text>
+            <Text style={styles.infoText}>{displayAddress}</Text>
           </View>
 
           <View style={styles.infoRow}>
@@ -538,13 +542,15 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
 
           {task.checkInOut?.checkIn && (
             <Text style={styles.infoText}>
-              Check-in: {formatDate(task.checkInOut.checkIn.time)}  •  {formatTime(task.checkInOut.checkIn.time)}
+              Check-in: {formatDate(task.checkInOut.checkIn.time)} •{" "}
+              {formatTime(task.checkInOut.checkIn.time)}
             </Text>
           )}
 
           {task.checkInOut?.checkOut && (
             <Text style={styles.infoText}>
-              Check-out: {formatDate(task.checkInOut.checkOut.time)}  •  {formatTime(task.checkInOut.checkOut.time)}
+              Check-out: {formatDate(task.checkInOut.checkOut.time)} •{" "}
+              {formatTime(task.checkInOut.checkOut.time)}
             </Text>
           )}
         </View>
@@ -553,7 +559,9 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           <Text style={styles.cardTitle}>IMAGES</Text>
 
           <View style={styles.photoHeaderRow}>
-            <Text style={styles.photoLabel}>All Photos ({sortedPhotoList.length})</Text>
+            <Text style={styles.photoLabel}>
+              All Photos ({sortedPhotoList.length})
+            </Text>
           </View>
 
           <View style={styles.photoActionRow}>
@@ -562,7 +570,11 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
               onPress={() => handleOpenPhotoUpload("before")}
               activeOpacity={0.8}
             >
-              <Ionicons name="camera-outline" size={16} color={Colors.primary500} />
+              <Ionicons
+                name="camera-outline"
+                size={16}
+                color={Colors.primary500}
+              />
               <Text style={styles.uploadLinkText}>Upload Before</Text>
             </TouchableOpacity>
 
@@ -571,7 +583,11 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
               onPress={() => handleOpenPhotoUpload("after")}
               activeOpacity={0.8}
             >
-              <Ionicons name="camera-outline" size={16} color={Colors.primary500} />
+              <Ionicons
+                name="camera-outline"
+                size={16}
+                color={Colors.primary500}
+              />
               <Text style={styles.uploadLinkText}>Upload After</Text>
             </TouchableOpacity>
           </View>
@@ -602,14 +618,15 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             )}
           </View>
 
-          {showPhotoReminder && !photoList.some(photo => photo.type === "after") && (
-            <View style={styles.photoReminder}>
-              <Ionicons name="camera" size={20} color={Colors.primary500} />
-              <Text style={styles.photoReminderText}>
-                Please take a photo after completing the order.
-              </Text>
-            </View>
-          )}
+          {showPhotoReminder &&
+            !photoList.some((photo) => photo.type === "after") && (
+              <View style={styles.photoReminder}>
+                <Ionicons name="camera" size={20} color={Colors.primary500} />
+                <Text style={styles.photoReminderText}>
+                  Please take a photo after completing the order.
+                </Text>
+              </View>
+            )}
         </View>
 
         {canViewTaskRating && !!taskRating && (
@@ -620,12 +637,20 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
               {[1, 2, 3, 4, 5].map((i) => (
                 <Ionicons
                   key={i}
-                  name={i <= Math.round(taskRating.score) ? "star" : "star-outline"}
+                  name={
+                    i <= Math.round(taskRating.score) ? "star" : "star-outline"
+                  }
                   size={20}
-                  color={i <= Math.round(taskRating.score) ? Colors.warning : Colors.gray300}
+                  color={
+                    i <= Math.round(taskRating.score)
+                      ? Colors.warning
+                      : Colors.gray300
+                  }
                 />
               ))}
-              <Text style={styles.ratingScoreText}>{taskRating.score.toFixed(1)}</Text>
+              <Text style={styles.ratingScoreText}>
+                {taskRating.score.toFixed(1)}
+              </Text>
             </View>
 
             {!!taskRating.comment && (

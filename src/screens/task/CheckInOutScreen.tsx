@@ -30,11 +30,11 @@ import { formatDate } from "../../utils/date";
 type Props = NativeStackScreenProps<TaskStackParamList, "CheckInOut">;
 
 export default function CheckInOutScreen({ route, navigation }: Props) {
-  const { taskId } = route.params;
+  const { shippingTaskId } = route.params;
 
   const { tasks, checkIn, startProcessing, checkOut, completeTask } = useTask();
 
-  const task = tasks.find((t) => t.id === taskId);
+  const task = tasks.find((t) => t.id === shippingTaskId);
 
   const [loading, setLoading] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());

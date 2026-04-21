@@ -20,13 +20,10 @@ import {
   BorderRadius,
 } from "../../constants/theme";
 
-type Props = NativeStackScreenProps<
-  TaskStackParamList,
-  "AddNote"
->;
+type Props = NativeStackScreenProps<TaskStackParamList, "AddNote">;
 
 export default function AddNoteScreen({ route, navigation }: Props) {
-  const { taskId } = route.params;
+  const { shippingTaskId } = route.params;
   const { addTaskNote } = useTask();
 
   const [note, setNote] = useState("");
@@ -41,7 +38,7 @@ export default function AddNoteScreen({ route, navigation }: Props) {
     setLoading(true);
 
     try {
-      await addTaskNote(taskId, note.trim());
+      await addTaskNote(shippingTaskId, note.trim());
 
       Alert.alert("Success", "Note added successfully.");
       navigation.goBack();
@@ -62,7 +59,7 @@ export default function AddNoteScreen({ route, navigation }: Props) {
 
         <Text style={styles.label}>Task ID</Text>
         <View style={styles.taskBox}>
-          <Text style={styles.taskText}>{taskId}</Text>
+          <Text style={styles.taskText}>{shippingTaskId}</Text>
         </View>
 
         <Text style={styles.label}>Note</Text>

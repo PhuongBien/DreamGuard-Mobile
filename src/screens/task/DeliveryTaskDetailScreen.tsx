@@ -32,12 +32,10 @@ import {
   Spacing,
   Typography,
 } from "../../constants/theme";
-import { fetchPaymentByOrderId } from "../../utils/api";
+import { fetchPaymentByOrderId, updateOrderProcessing } from "../../utils/api";
 import { formatDate } from "../../utils/date";
 import { uploadImageToCloudinary } from "../../utils/cloudinary";
 import { TradeInOrderService } from "../../services/trade-in-order.service";
-import TradeInDetailScreen from "./TradeInDetailScreen";
-
 type Props = NativeStackScreenProps<TaskStackParamList, "TaskDetail">;
 
 const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
@@ -52,7 +50,29 @@ const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
   completed: "Completed",
   cancelled: "Cancelled",
   on_hold: "On Hold",
+  exchange_requested: "Exchange Requested",
 };
+
+function normalizeStatus(status?: string): TaskStatus {
+  switch (status?.toLowerCase()) {
+    case "pending":
+      return "pending";
+    case "delivering":
+      return "delivering";
+    case "arrived":
+      return "arrived";
+    case "delivered":
+      return "delivered";
+    case "returned":
+      return "returned";
+
+    case "exchangerequested":
+      return "pending";
+
+    default:
+      return "pending";
+  }
+}
 
 const DELIVERY_IMAGE_GROUP_LABELS = {
   start_delivery: "Captured Before Start Delivery",
@@ -76,47 +96,15 @@ const toTrimmedString = (value: unknown): string | undefined => {
   return trimmed || undefined;
 };
 
-// const extractPaymentInfo = (payload: unknown): PaymentInfo => {
-//   const source = isRecord(payload)
-//     ? isRecord(payload.data)
-//       ? payload.data
-//       : payload
-//     : {};
-
-//   const candidates = [
-//     source,
-//     isRecord(source.payment) ? source.payment : null,
-//     isRecord(source.orderPayment) ? source.orderPayment : null,
-//     Array.isArray(source.items) && isRecord(source.items[0])
-//       ? source.items[0]
-//       : null,
-//     Array.isArray(source.results) && isRecord(source.results[0])
-//       ? source.results[0]
-//       : null,
-//   ].filter((item): item is Record<string, any> => !!item);
-
-//   for (const item of candidates) {
-//     const paymentMethod =
-//       toTrimmedString(item.paymentMethod) ||
-//       toTrimmedString(item.paymentType) ||
-//       toTrimmedString(item.method) ||
-//       toTrimmedString(item.methodName);
-//     const paymentStatus =
-//       toTrimmedString(item.paymentStatus) ||
-//       toTrimmedString(item.paymentState) ||
-//       toTrimmedString(item.status) ||
-//       toTrimmedString(item.state);
-
-//     if (paymentMethod || paymentStatus) {
-//       return {
-//         paymentMethod,
-//         paymentStatus,
-//       };
-//     }
-//   }
-
-//   return {};
-// };
+/** Backend allows start delivering only when order is Processing or ExchangeRequested */
+function isServiceOrderReadyForDeliverStart(status?: string): boolean {
+  const s = (status ?? "").trim().toLowerCase().replace(/\s+/g, "");
+  return (
+    s === "processing" ||
+    s === "inprogress" ||
+    s === "exchangerequested"
+  );
+}
 
 const extractPaymentInfo = (payload: unknown): PaymentInfo => {
   const source = isRecord(payload)
@@ -130,7 +118,13 @@ const extractPaymentInfo = (payload: unknown): PaymentInfo => {
     source.payment,
     source.orderPayment,
     Array.isArray(source.items) ? source.items[0] : null,
-  ].filter((i): i is Record<string, any> => !!i);
+
+    // ✅ THÊM DÒNG NÀY
+    {
+      paymentMethod: source.paymentMethod,
+      paymentStatus: source.paymentStatus,
+    },
+  ];
 
   for (const item of candidates) {
     const paymentMethod =
@@ -154,12 +148,7 @@ const extractPaymentInfo = (payload: unknown): PaymentInfo => {
 };
 
 export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
-  const { taskId, type } = route.params;
-  
-  // If type is "tradein", render the TradeIn-specific screen
-  if (type === "tradein") {
-    return <TradeInDetailScreen route={route} navigation={navigation} />;
-  }
+  const { shippingTaskId, type } = route.params;
 
   const { tasks, getTaskById, startDelivery, markArrived, addTaskPhoto } =
     useTask();
@@ -173,8 +162,8 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
   const paymentRequestIdRef = useRef(0);
 
   const task = useMemo(
-    () => tasks.find((item) => item.id === taskId),
-    [taskId, tasks],
+    () => tasks.find((item) => item.id === shippingTaskId),
+    [shippingTaskId, tasks],
   );
 
   useEffect(() => {
@@ -185,10 +174,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     taskRef.current = task;
   }, [task]);
 
-
   const loadPaymentInfo = useCallback(async (orderId?: string) => {
-    console.log("ORDER ID:", orderId);
-
     const requestId = ++paymentRequestIdRef.current;
 
     if (!orderId) {
@@ -198,7 +184,6 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
 
     try {
       const response = await fetchPaymentByOrderId(orderId);
-
 
       if (paymentRequestIdRef.current !== requestId) return;
 
@@ -211,6 +196,8 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
   }, []);
 
   const loadTask = useCallback(async () => {
+    if (!shippingTaskId) return; // 👈 chặn undefined
+
     const shouldShowLoader = !taskRef.current;
 
     try {
@@ -218,7 +205,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
         setDetailLoading(true);
       }
 
-      const refreshedTask = await getTaskByIdRef.current(taskId, {
+      const refreshedTask = await getTaskByIdRef.current(shippingTaskId, {
         forceRefresh: true,
       });
 
@@ -228,7 +215,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
         setDetailLoading(false);
       }
     }
-  }, [loadPaymentInfo, taskId]);
+  }, [loadPaymentInfo, shippingTaskId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -360,6 +347,12 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     task?.estimatedDuration
   );
 
+  const needsReceiveOrderForDelivery = useMemo(() => {
+    if (!task || task.status !== "pending") return false;
+    if (!task.orderId?.trim()) return false;
+    return !isServiceOrderReadyForDeliverStart(task.serviceOrderStatus);
+  }, [task]);
+
   if (!task) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -377,7 +370,48 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     );
   }
 
+  const handleReceiveOrder = async () => {
+    if (!task.orderId?.trim()) {
+      Alert.alert(
+        "Cannot receive order",
+        "This delivery task is not linked to a service order.",
+      );
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      const res = await updateOrderProcessing(task.orderId);
+      if (!res.success) {
+        throw new Error(
+          res.message || res.error || "Could not move order to Processing.",
+        );
+      }
+      await getTaskById(task.id, { forceRefresh: true });
+      await loadPaymentInfo(task.orderId);
+      Alert.alert(
+        "Order received",
+        "The order is now in Processing. Capture evidence, then tap Start delivery.",
+      );
+    } catch (error: any) {
+      Alert.alert(
+        "Cannot update",
+        error?.message || "Could not receive order.",
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleStartDelivery = async () => {
+    if (!isServiceOrderReadyForDeliverStart(task.serviceOrderStatus)) {
+      Alert.alert(
+        "Receive order first",
+        "Tap Receive order below to set the order to Processing (or wait until it is Exchange requested), then start delivery.",
+      );
+      return;
+    }
+
     if (!evidenceImageUri) {
       Alert.alert(
         "Missing evidence",
@@ -471,15 +505,19 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
           <View style={styles.heroMetaRow}>
             <Text style={styles.taskCode}>{task.taskCode}</Text>
             <View
-              style={[styles.statusBadge, getStatusBadgeStyle(task.status)]}
+              style={[
+                styles.statusBadge,
+                getStatusBadgeStyle(normalizeStatus(task.status)),
+              ]}
             >
               <Text
                 style={[
                   styles.statusBadgeText,
-                  getStatusBadgeTextStyle(task.status),
+                  getStatusBadgeTextStyle(normalizeStatus(task.status)),
                 ]}
               >
-                {DELIVERY_STATUS_LABELS[task.status]}
+                {DELIVERY_STATUS_LABELS[normalizeStatus(task.status)] ||
+                  task.status}
               </Text>
             </View>
           </View>
@@ -494,26 +532,24 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
           <InfoRow
             icon="person-outline"
             label="Recipient"
-            value={task.customer.name || "-"}
+            value={task.customer?.name || "-"}
           />
           <InfoRow
             icon="call-outline"
             label="Phone"
-            value={task.customer.phone || "-"}
+            value={task.customer?.phone || "-"}
           />
           <InfoRow
             icon="location-outline"
             label="Address"
-            value={task.customer.address || "-"}
+            value={task.customer?.address || "-"}
           />
-          {/* <InfoRow icon="person-circle-outline" label="Staff" value={task.assignedToName || task.assignedTo || "-"} /> */}
-          {/* <InfoRow icon="barcode-outline" label="Shipping Task ID" value={task.id} /> */}
+
           <InfoRow
             icon="receipt-outline"
             label="Order Code"
             value={task.taskCode || "-"}
           />
-          {/* <InfoRow icon="document-text-outline" label="Order ID" value={task.orderId || "-"} /> */}
           <InfoRow
             icon="time-outline"
             label="Shipping Date"
@@ -540,12 +576,6 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
               label="Order status"
               value={task.serviceOrderStatus || "-"}
             />
-            {/* <KeyValueRow
-              label="Payment method"
-              value={task.paymentMethod || task.paymentStatus
-                ? `${task.paymentMethod || "-"} / ${task.paymentStatus || "-"}`
-                : "-"}
-            /> */}
             <KeyValueRow
               label="Total value"
               value={formatCurrency(task.totalPrice)}
@@ -558,18 +588,13 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
               label="Payment status"
               value={paymentStatusValue || "-"}
             />
-
-            {/* <KeyValueRow
-              label="Estimated duration"
-              value={task.estimatedDuration ? `${task.estimatedDuration} min` : "-"}
-            /> */}
           </Section>
         ) : null}
 
         {(task.products || []).length ? (
           <Section title="Related Products">
-            {(task.products || []).map((product) => (
-              <View key={product.id} style={styles.productRow}>
+            {(task.products || []).map((product, index) => (
+              <View key={product.id || index} style={styles.productRow}>
                 <View style={styles.productInfo}>
                   <Text style={styles.productName}>{product.name}</Text>
                   {!!product.description && (
@@ -590,15 +615,28 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
           </Section>
         ) : null}
 
-        {task.status === "pending" ? (
+        {task.status === "pending" && needsReceiveOrderForDelivery ? (
+          <Section title="Receive order">
+            <Text style={styles.ruleText}>
+              The service order must be in Processing (or Exchange requested)
+              before you can start delivery. Tap &quot;Receive order&quot; at the
+              bottom, then capture evidence and tap &quot;Start delivery&quot;.
+            </Text>
+            {!task.orderId?.trim() ? (
+              <Text style={styles.warningText}>
+                This task has no linked order ID. Contact the office if this
+                message appears.
+              </Text>
+            ) : null}
+          </Section>
+        ) : null}
+
+        {task.status === "pending" && !needsReceiveOrderForDelivery ? (
           <Section title="Start Delivery Evidence">
             <Text style={styles.ruleText}>
               Capture an evidence photo from the camera before starting
               delivery.
             </Text>
-            {/* <Text style={styles.noteMeta}>
-              Current order status: {task.serviceOrderStatus || "unknown"}. Backend only accepts Start Delivery when the order is in Processing.
-            </Text> */}
 
             <TouchableOpacity
               style={styles.captureBox}
@@ -703,10 +741,12 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
                         key={`${photo.url}_${index}`}
                         style={styles.imageCard}
                       >
-                        <Image
-                          source={{ uri: photo.url }}
-                          style={styles.imageItem}
-                        />
+                        {photo.url ? (
+                          <Image
+                            source={{ uri: photo.url }}
+                            style={styles.imageItem}
+                          />
+                        ) : null}
                         {photo.uploadedAt ? (
                           <Text style={styles.imageMetaText}>
                             {formatDateTimeDisplay(photo.uploadedAt)}
@@ -736,7 +776,15 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       ) : null}
 
       <View style={styles.bottomBar}>
-        {task.status === "pending" ? (
+        {task.status === "pending" && needsReceiveOrderForDelivery ? (
+          <PrimaryButton
+            title="Receive order"
+            loading={actionLoading}
+            onPress={handleReceiveOrder}
+          />
+        ) : null}
+
+        {task.status === "pending" && !needsReceiveOrderForDelivery ? (
           <PrimaryButton
             title="Start Delivery"
             loading={actionLoading}
@@ -763,7 +811,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
               disabled={actionLoading}
               onPress={() =>
                 navigation.navigate("DeliveryPhotoCapture", {
-                  taskId: task.id,
+                  shippingTaskId: task.id,
                   mode: "returned",
                 })
               }
@@ -785,7 +833,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
               disabled={actionLoading}
               onPress={() =>
                 navigation.navigate("DeliveryPhotoCapture", {
-                  taskId: task.id,
+                  shippingTaskId: task.id,
                   mode: "delivered",
                 })
               }
@@ -944,8 +992,11 @@ function getStatusBadgeTextStyle(status: TaskStatus) {
 }
 
 function formatSchedule(task: Task) {
-  if (!task.appointmentDateRaw && !task.dueDate) return "No delivery schedule";
-  const dateText = formatDate(task.dueDate);
+  const date = task.dueDate || (task as any).shippingDate;
+
+  if (!date) return "No delivery schedule";
+
+  const dateText = formatDate(date);
   return task.dueTime ? `${dateText} • ${task.dueTime}` : dateText;
 }
 
@@ -1124,6 +1175,13 @@ const styles = StyleSheet.create({
     color: Colors.gray800,
     fontSize: Typography.base,
     lineHeight: 22,
+    fontWeight: "600",
+  },
+  warningText: {
+    marginTop: Spacing.sm,
+    color: Colors.error,
+    fontSize: Typography.sm,
+    lineHeight: 20,
     fontWeight: "600",
   },
   timelineRow: {

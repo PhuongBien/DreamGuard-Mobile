@@ -54,81 +54,6 @@ const normalizeRoleKey = (value?: string) => {
   return normalized;
 };
 
-// const mapTaskFromApi = (item: any): Task => {
-//   return {
-//     id: item.serviceTaskId,
-//     taskCode: item.serviceTaskId?.slice(0, 8),
-
-//     title:
-//       item.serviceOrderItems?.[0]?.servicePackageName ||
-//       "Không có tiêu đề",
-
-//     description: item.customerNote || "",
-
-//     status: mapStatus(item.status),
-
-//     dueDate: item.appointmentDate?.split("T")[0],
-//     dueTime: item.appointmentDate?.split("T")[1]?.slice(0, 5),
-
-//     totalPrice: item.totalPrice,
-//     paymentMethod: item.paymentMethod,
-//     paymentStatus: item.paymentStatus,
-//     serviceOrderStatus: item.serviceOrderStatus,
-
-//     customer: {
-//       id: item.soId || item.serviceTaskId,
-//       name: item.receiverName,
-//       phone: item.phoneNumber,
-//       address: item.address,
-//       note: item.customerNote,
-//     },
-
-//     products: (item.serviceOrderItems || []).map((i: any) => ({
-//       id: i.serviceOrderItemId,
-//       name: i.servicePackageName,
-//       quantity: i.quantity || 1,
-//     })),
-
-//     photos: (item.serviceOrderImageUrl || []).map(
-//       (url: string, idx: number) => ({
-//         url,
-//         type: idx === 0 ? "before" : "after",
-//       }),
-//     ),
-
-//     checkInOut: {
-//       checkIn: item.checkIn
-//         ? { time: item.checkIn }
-//         : undefined,
-//       checkOut: item.checkOut
-//         ? { time: item.checkOut, durationMinutes: 0 }
-//         : undefined,
-//     },
-
-//     servicePackageMapping: item.serviceOrderItems?.[0]
-//   ? {
-//       servicePackageMappingId:
-//         item.serviceOrderItems[0].servicePackageMappingId,
-
-//       price: item.serviceOrderItems[0].totalPrice,
-
-//       duration: undefined,
-
-//       servicePackage: {
-//         packageName: item.serviceOrderItems[0].servicePackageName,
-//         status: "-",
-//         suitableFor: "-",
-//       },
-
-//       productType: {
-//         productTypeName:
-//           item.serviceOrderItems[0].productTypeName,
-//       },
-//     }
-//   : undefined,
-//   };
-// };
-
 export interface TaskContextType {
   tasks: Task[];
   loading: boolean;
@@ -457,7 +382,7 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
 
     if (isDeliveryStaff) {
       const task = await DeliveryTaskService.getTaskById(taskId);
-      
+
       const mappedTask = task
         ? {
             ...task,
@@ -679,7 +604,6 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const startDelivery = async (taskId: string, evidenceUrls: string[] = []) => {
-    
     const existing = tasksRef.current.find((task) => task.id === taskId);
     const updated = await DeliveryTaskService.startDelivery(
       taskId,

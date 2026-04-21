@@ -1,89 +1,96 @@
+// ============================================
+// Trade-in Status (map từ backend)
+// ============================================
 export type TradeInOrderStatus =
   | "pending"
-  | "confirmed"
-  | "ready_for_delivery"
   | "processing"
   | "delivered"
   | "completed"
   | "cancelled";
 
-export interface TradeInCustomerInfo {
-  id?: string;
-  name: string;
-  phone: string;
-  address: string;
-  note?: string;
-}
+// Backend raw status (optional nếu bạn muốn map riêng)
+export type TradeInBackendStatus =
+  | "RETURNING"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "PENDING";
 
-export interface TradeInProductInfo {
-  id?: string;
-  name: string;
-  model?: string;
-  type?: string;
-  description?: string;
-  quantity?: number;
-  estimatedPrice?: number;
-}
-
-export interface TradeInDeviceInfo {
-  oldDevice?: TradeInProductInfo;
-  newDevice?: TradeInProductInfo;
-}
-
-export interface TradeInOrder {
+// ============================================
+// Payment
+// ============================================
+export interface TradeInPayment {
   id: string;
-  tradeInOrderId?: string;
   orderCode: string;
-  status: TradeInOrderStatus;
-  
-  customer: TradeInCustomerInfo;
-  devices: TradeInDeviceInfo;
-  
-  priceAgreed?: number;
-  notes?: string;
-  
-  createdAt?: string;
+  paymentType: string;
+  status: string;
+  amount: number;
+  paymentMethod: string;
+  createdAt: string;
+}
+
+// ============================================
+// Order Item
+// ============================================
+export interface TradeInOrderItem {
+  id: string;
+  itemName: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  tradeInUsedAmount?: number;
+}
+
+// ============================================
+// Product Variant
+// ============================================
+export interface TradeInProductVariant {
+  id: string;
+  sku: string;
+  basePrice: number;
+  salePrice: number;
+  size?: string;
+}
+
+// ============================================
+// Image
+// ============================================
+export interface TradeInImage {
+  id?: string;
+  imageUrl: string;
+}
+
+// ============================================
+// MAIN TYPE (MATCH BACKEND)
+// ============================================
+export interface TradeInOrder {
+  tradeInOrderId: string;
+
+  customerId?: string;
+  orderId?: string;
+
+  orderCode: string;
+  status: string; // raw backend status
+
+  receiverName: string;
+  phoneNumber: string;
+  address: string;
+
+  description?: string;
+
+  tradeInPrice?: number;
+  amountToPay?: number;
+  depositAmount?: number;
+  isGood?: boolean;
+  oldProductVariantUrl?: string;
+  newProductVariantUrl?: string;
+
+  createdAt: string;
   updatedAt?: string;
-  
-  // Timeline tracking
-  processingStartedAt?: string;
-  deliveredAt?: string;
-  completedAt?: string;
-  
-  // For display and interaction
-  assignedTo?: string;
-  assignedToName?: string;
-  
-  // Related images
-  photos?: Array<{
-    id?: string;
-    url: string;
-    type?: "device_condition" | "pickup_evidence" | "other";
-    uploadedAt?: string;
-  }>;
-}
 
-export interface TradeInOrderListParams {
-  page?: number;
-  pageSize?: number;
-  status?: TradeInOrderStatus | "all";
-  search?: string;
-  orderCode?: string;
-}
+  // relations
+  payments?: TradeInPayment[];
+  orderItem?: TradeInOrderItem;
+  productVariant?: TradeInProductVariant;
 
-export interface TradeInOrderSearchParams {
-  status?: TradeInOrderStatus;
-  orderCode?: string;
-  customerPhone?: string;
-  pageNumber?: number;
-  pageSize?: number;
-}
-
-export interface TradeInStatusUpdatePayload {
-  status: TradeInOrderStatus;
-  notes?: string;
-  images?: Array<{
-    url: string;
-    type?: string;
-  }>;
+  tradeInImages?: TradeInImage[];
 }

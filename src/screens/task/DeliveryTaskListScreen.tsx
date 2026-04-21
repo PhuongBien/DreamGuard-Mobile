@@ -8,35 +8,27 @@ import {
   Text,
   TouchableOpacity,
   View,
-  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
-import { useTask } from "../../context/TaskContext";
 import { useAuth } from "../../context/AuthContext";
-import { Task, TaskFilter, TaskStatus, TradeInOrder, TradeInOrderStatus } from "../../types";
+import { TaskStatus, ShippingTask } from "../../types";
 import { TaskStackParamList } from "../../types/navigation";
 import { Colors, Shadow, Spacing, Typography } from "../../constants/theme";
-import { formatDate } from "../../utils/date";
-import { TradeInOrderService } from "../../services/trade-in-order.service";
+import { formatDate, formatTime } from "../../utils/date";
+import {
+  fetchShippingTasks,
+  fetchOrderById,
+  fetchTradeInOrderById,
+} from "../../utils/api";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "TaskList">;
 
-const TRADEIN_STATUS_LABELS: Record<TradeInOrderStatus, string> = {
-  pending: "Pending",
-  confirmed: "Confirmed",
-  ready_for_delivery: "Ready for Delivery",
-  processing: "Processing",
-  delivered: "Delivered",
-  completed: "Completed",
-  cancelled: "Cancelled",
-};
-
 const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
-  pending: "Pending",
+  pending: "Awaiting processing",
   delivering: "Delivering",
   arrived: "Arrived",
   delivered: "Delivered",
@@ -47,434 +39,523 @@ const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
   completed: "Completed",
   cancelled: "Cancelled",
   on_hold: "On Hold",
+  exchange_requested: "Exchange Requested",
 };
 
-const DELIVERY_FILTERS: Array<{ value: TaskFilter; label: string }> = [
+const STATUS_BADGES: Record<TaskStatus, { bg: string; text: string }> = {
+  pending: { bg: "#FDECC8", text: "#CC8A06" },
+  checked_in: { bg: "#DBE9FA", text: "#1A5294" },
+  in_progress: { bg: "#DCE9FA", text: "#4D79B8" },
+  checked_out: { bg: "#D8EEF9", text: "#2F7D9F" },
+  completed: { bg: "#DDF4E6", text: "#2C8B52" },
+  cancelled: { bg: "#FCE2E2", text: "#B43B3B" },
+  on_hold: { bg: "#ECEEF2", text: "#66748A" },
+  delivering: { bg: "#DBEAFE", text: "#1D4ED8" },
+  arrived: { bg: "#E0F2FE", text: "#0369A1" },
+  delivered: { bg: "#DCFCE7", text: "#166534" },
+  returned: { bg: "#FEE2E2", text: "#B91C1C" },
+  exchange_requested: { bg: "#ECEEF2", text: "#66748A" },
+};
+
+type MainFilter = "all" | "pending" | "delivering" | "completed" | "returned";
+
+const MAIN_FILTERS: Array<{
+  value: MainFilter;
+  label: string;
+  hasSub?: boolean;
+}> = [
   { value: "all", label: "All" },
   { value: "pending", label: "Pending" },
-  { value: "delivering", label: "Delivering" },
-  { value: "arrived", label: "Arrived" },
-  { value: "delivered", label: "Delivered" },
+  { value: "delivering", label: "Shipping ▾", hasSub: true },
+  { value: "completed", label: "Done" },
   { value: "returned", label: "Returned" },
 ];
 
-const TRADEIN_FILTERS: Array<{ value: TradeInOrderStatus | "all"; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "ready_for_delivery", label: "Ready" },
-  { value: "processing", label: "Processing" },
-  { value: "delivered", label: "Delivered" },
-  { value: "completed", label: "Completed" },
-];
+const SUB_FILTERS: Record<
+  "delivering",
+  Array<{ value: TaskStatus; label: string }>
+> = {
+  delivering: [
+    { value: "delivering", label: "Delivering" },
+    { value: "arrived", label: "Arrived" },
+  ],
+};
+
+const GROUP_STATUS_MAP: Record<MainFilter, TaskStatus[]> = {
+  all: [
+    "pending",
+    "delivering",
+    "arrived",
+    "delivered",
+    "returned",
+    "exchange_requested",
+  ],
+  pending: ["pending"],
+  delivering: ["delivering", "arrived"],
+  completed: ["delivered"],
+  returned: ["returned"],
+};
+
+function getFilterLabel(filter: MainFilter, subStatus: TaskStatus | null) {
+  if (subStatus) {
+    switch (subStatus) {
+      case "delivering":
+        return "Delivering";
+      case "arrived":
+        return "Arrived";
+      default:
+        return DELIVERY_STATUS_LABELS[subStatus] || "Filtered";
+    }
+  }
+
+  switch (filter) {
+    case "all":
+      return "All";
+    case "pending":
+      return "Pending";
+    case "delivering":
+      return "Shipping";
+    case "completed":
+      return "Done";
+    case "returned":
+      return "Returned";
+    default:
+      return "Filtered";
+  }
+}
+
+type UIShippingTask = {
+  id: string;
+  shippingTaskId: string;
+  status: TaskStatus;
+  title: string;
+  taskCode: string;
+  customerName: string;
+  /** Primary line item name from order / trade-in API */
+  itemName?: string;
+  products: { name: string }[];
+  dueDate?: string;
+  dueTime?: string;
+  orderId?: string | null;
+  tradeInOrderId?: string | null;
+};
+
+function normalizeStatus(status?: string): TaskStatus {
+  const raw = String(status ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+
+  if (raw === "pending") return "pending";
+  if (raw === "delivering") return "delivering";
+  if (raw === "arrived") return "arrived";
+  if (raw === "delivered") return "delivered";
+  if (raw === "returned" || raw === "returning" || raw === "failed") {
+    return "returned";
+  }
+  if (raw === "exchangerequested" || raw === "exchange_requested") {
+    return "exchange_requested";
+  }
+  if (raw === "cancelled" || raw === "canceled" || raw === "forcedcancelled") {
+    return "cancelled";
+  }
+  if (raw.includes("return")) return "returned";
+  if (raw.includes("exchange") && raw.includes("request")) {
+    return "exchange_requested";
+  }
+  if (raw.includes("cancel")) return "cancelled";
+
+  return "pending";
+}
+
+function mapShippingTaskToUI(task: ShippingTask): UIShippingTask {
+  return {
+    id: task.shippingTaskId,
+    shippingTaskId: task.shippingTaskId,
+    status: normalizeStatus(task.status),
+    title: task.orderCode || `Task #${task.shippingTaskId.slice(0, 6)}`,
+    taskCode: task.orderCode || task.shippingTaskId,
+    customerName: "",
+    products: [],
+    dueDate: task.shippingDate || undefined,
+    orderId: task.orderId,
+    tradeInOrderId: task.tradeInOrderId,
+  };
+}
 
 export default function DeliveryTaskListScreen({ navigation }: Props) {
-  const { tasks, refreshTasks } = useTask();
   const { user } = useAuth();
-
-  const [tab, setTab] = useState<"tasks" | "tradein">("tasks");
-  const [selectedStatus, setSelectedStatus] = useState<TaskFilter>("all");
-  const [selectedTradeInStatus, setSelectedTradeInStatus] = useState<TradeInOrderStatus | "all">("all");
+  const [tasks, setTasks] = useState<UIShippingTask[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [tradeInOrders, setTradeInOrders] = useState<TradeInOrder[]>([]);
-  const [tradeInLoading, setTradeInLoading] = useState(false);
+
+  const [showAll, setShowAll] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<MainFilter>("all");
+  const [selectedSubStatus, setSelectedSubStatus] = useState<TaskStatus | null>(
+    null,
+  );
+  const [openSubGroup, setOpenSubGroup] = useState<"delivering" | null>(null);
+
+  const filteredTasks = useMemo(() => {
+    if (!showAll) return tasks;
+
+    if (selectedGroup === "all") return tasks;
+
+    const groupStatuses = GROUP_STATUS_MAP[selectedGroup];
+    const statuses = selectedSubStatus ? [selectedSubStatus] : groupStatuses;
+
+    return tasks.filter((t) => statuses.includes(t.status));
+  }, [tasks, showAll, selectedGroup, selectedSubStatus]);
 
   const orderedTasks = useMemo(() => {
-    const filtered =
-      selectedStatus === "all"
-        ? tasks
-        : tasks.filter((task) => task.status === selectedStatus);
+    const copy = [...filteredTasks];
 
-    return [...filtered].sort((a, b) => {
+    copy.sort((a, b) => {
       const aTime = toTimestamp(a.dueDate, a.dueTime);
       const bTime = toTimestamp(b.dueDate, b.dueTime);
       return bTime - aTime;
     });
-  }, [selectedStatus, tasks]);
 
-  const orderedTradeInOrders = useMemo(() => {
-    const filtered =
-      selectedTradeInStatus === "all"
-        ? tradeInOrders
-        : tradeInOrders.filter((order) => order.status === selectedTradeInStatus);
+    return copy;
+  }, [filteredTasks]);
 
-    return [...filtered].sort((a, b) => {
-      const aTime = new Date(a.createdAt || 0).getTime();
-      const bTime = new Date(b.createdAt || 0).getTime();
-      return bTime - aTime;
-    });
-  }, [selectedTradeInStatus, tradeInOrders]);
+  const visibleTasks = showAll ? orderedTasks : orderedTasks.slice(0, 3);
+  const displayTasks = visibleTasks;
 
   const stats = useMemo(
     () => ({
       total: tasks.length,
-      active: tasks.filter(
-        (task) => task.status === "delivering" || task.status === "arrived",
-      ).length,
-      done: tasks.filter((task) => task.status === "delivered").length,
+      done: tasks.filter((t) => t.status === "delivered").length,
+      doing: tasks.filter((t) => ["delivering", "arrived"].includes(t.status))
+        .length,
     }),
     [tasks],
   );
 
-  const tradeInStats = useMemo(
-    () => ({
-      total: tradeInOrders.length,
-      active: tradeInOrders.filter(
-        (order) => order.status === "processing" || order.status === "ready_for_delivery",
-      ).length,
-      done: tradeInOrders.filter((order) => order.status === "completed").length,
-    }),
-    [tradeInOrders],
-  );
-
   const loadTasks = useCallback(async () => {
-    await refreshTasks({ status: selectedStatus });
-  }, [refreshTasks, selectedStatus]);
+    const res = await fetchShippingTasks({});
+    if (res.success) {
+      const rawTasks = res.data?.items ?? [];
+      const enrichedTasks = await Promise.all(
+        rawTasks.map(async (task) => {
+          const base = mapShippingTaskToUI(task);
+          try {
+            const orderRes = task.orderId
+              ? await fetchOrderById(task.orderId)
+              : null;
+            const tradeRes = task.tradeInOrderId
+              ? await fetchTradeInOrderById(task.tradeInOrderId)
+              : null;
+            const data = orderRes?.data || tradeRes?.data;
 
-  const loadTradeInOrders = useCallback(async () => {
-    try {
-      setTradeInLoading(true);
-      const { orders } = await TradeInOrderService.fetchWaitingOrders({
-        status: selectedTradeInStatus === "all" ? undefined : (selectedTradeInStatus as TradeInOrderStatus),
-      });
-      setTradeInOrders(orders);
-    } catch (error) {
-      console.error("Failed to load TradeIn orders:", error);
-      setTradeInOrders([]);
-    } finally {
-      setTradeInLoading(false);
+            if (data) {
+              const isExchange = data.shippingStatus === "ExchangeRequested";
+              const fromItems = Array.isArray(data.items)
+                ? data.items
+                    .map((i: { itemName?: string; name?: string }) =>
+                      String(i?.itemName ?? i?.name ?? "").trim(),
+                    )
+                    .filter(Boolean)
+                : [];
+              const orderItemName = String(
+                data.orderItem?.itemName ?? data.orderItem?.name ?? "",
+              ).trim();
+              const itemName =
+                orderItemName || fromItems[0] || undefined;
+              const products =
+                fromItems.length > 0
+                  ? fromItems.map((name: string) => ({ name }))
+                  : orderItemName
+                    ? [{ name: orderItemName }]
+                    : [];
+              return {
+                ...base,
+                customerName: data.receiverName ?? "",
+                itemName,
+                products,
+                dueDate: isExchange ? data.updatedAt : data.createdAt,
+                dueTime: (isExchange ? data.updatedAt : data.createdAt)
+                  ? new Date(isExchange ? data.updatedAt : data.createdAt)
+                      .toISOString()
+                      .slice(11, 16)
+                  : undefined,
+              };
+            }
+            return base;
+          } catch {
+            return base;
+          }
+        }),
+      );
+      setTasks(enrichedTasks);
     }
-  }, [selectedTradeInStatus]);
+  }, []);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    try {
-      if (tab === "tasks") {
-        await loadTasks();
-      } else {
-        await loadTradeInOrders();
-      }
-    } finally {
-      setRefreshing(false);
-    }
-  }, [tab, loadTasks, loadTradeInOrders]);
+    await loadTasks();
+    setRefreshing(false);
+  }, [loadTasks]);
 
   useFocusEffect(
     useCallback(() => {
-      if (tab === "tasks") {
-        loadTasks();
-      } else {
-        loadTradeInOrders();
-      }
-    }, [tab, loadTasks, loadTradeInOrders]),
+      loadTasks();
+    }, [loadTasks]),
   );
+
+  const renderTask = ({ item }: { item: UIShippingTask }) => {
+    const badge = STATUS_BADGES[item.status] || STATUS_BADGES.pending;
+    const priorityDot =
+      item.status === "returned" ? "#E54848" : "#E9A522";
+    const displayRecipient =
+      item.customerName?.trim() || "No address available";
+    const productLine = formatItemProductLine(item);
+
+    return (
+      <TouchableOpacity
+        style={styles.taskCard}
+        activeOpacity={0.86}
+        onPress={() => {
+          if (item.tradeInOrderId) {
+            navigation.navigate("TradeInDetail", {
+              tradeInOrderId: item.tradeInOrderId,
+              shippingTaskId: item.shippingTaskId,
+            });
+          } else {
+            navigation.navigate("TaskDetail", {
+              taskId: item.id,
+              shippingTaskId: item.shippingTaskId,
+              type: "task",
+            });
+          }
+        }}
+      >
+        <View style={styles.taskTopRow}>
+          <View style={styles.typeRow}>
+            <MaterialCommunityIcons
+              name="truck-delivery-outline"
+              size={16}
+              color={Colors.primary500}
+            />
+            <Text numberOfLines={1} style={styles.typeLabel}>
+              Delivery
+            </Text>
+            <View
+              style={[styles.priorityDot, { backgroundColor: priorityDot }]}
+            />
+          </View>
+
+          <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+            <Text
+              numberOfLines={1}
+              style={[styles.statusBadgeText, { color: badge.text }]}
+            >
+              {DELIVERY_STATUS_LABELS[item.status]}
+            </Text>
+          </View>
+        </View>
+
+        <Text style={styles.taskTitle} numberOfLines={2}>
+          {item.title}
+        </Text>
+
+        <View style={styles.metaRow}>
+          <Ionicons
+            name="location-outline"
+            size={14}
+            color={Colors.primary700}
+          />
+          <Text style={styles.metaText} numberOfLines={1}>
+            {displayRecipient}
+          </Text>
+        </View>
+
+        {productLine ? (
+          <View style={styles.metaRowProducts}>
+            <Ionicons name="cube-outline" size={14} color={Colors.primary700} />
+            <Text style={styles.metaText} numberOfLines={2}>
+              {productLine}
+            </Text>
+          </View>
+        ) : null}
+
+        <View style={styles.metaRowBottom}>
+          <View style={styles.metaRow}>
+            <Ionicons name="time-outline" size={14} color={Colors.primary700} />
+            <Text style={styles.metaText}>
+              {formatDateTimeDisplay(item.dueDate, item.dueTime)}
+            </Text>
+          </View>
+
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color={Colors.primary700}
+          />
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primary700} />
 
       <View style={styles.hero}>
         <Text style={styles.heroEyebrow}>Delivery Staff</Text>
-        <Text style={styles.heroTitle}>{user?.name || user?.fullName || "Staff"}</Text>
+        <Text style={styles.heroTitle}>
+          {user?.name || user?.fullName || "Staff"}
+        </Text>
         <Text style={styles.heroSubTitle}>
           View assigned tasks, check details, and update delivery status.
         </Text>
 
         <View style={styles.statRow}>
-          {tab === "tasks" ? (
-            <>
-              <StatCard label="Total Tasks" value={stats.total} />
-              <StatCard label="In Progress" value={stats.active} />
-              <StatCard label="Completed" value={stats.done} />
-            </>
-          ) : (
-            <>
-              <StatCard label="Total Orders" value={tradeInStats.total} />
-              <StatCard label="In Progress" value={tradeInStats.active} />
-              <StatCard label="Completed" value={tradeInStats.done} />
-            </>
-          )}
+          <StatCard label="Total Tasks" value={stats.total} />
+          <StatCard label="Completed" value={stats.done} />
+          <StatCard label="In Progress" value={stats.doing} />
         </View>
-      </View>
-
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tabButton, tab === "tasks" && styles.tabButtonActive]}
-          activeOpacity={0.7}
-          onPress={() => setTab("tasks")}
-        >
-          <MaterialCommunityIcons
-            name="truck-delivery"
-            size={18}
-            color={tab === "tasks" ? Colors.white : Colors.primary700}
-          />
-          <Text style={[styles.tabText, tab === "tasks" && styles.tabTextActive]}>
-            Delivery Tasks
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabButton, tab === "tradein" && styles.tabButtonActive]}
-          activeOpacity={0.7}
-          onPress={() => setTab("tradein")}
-        >
-          <MaterialCommunityIcons
-            name="handshake"
-            size={18}
-            color={tab === "tradein" ? Colors.white : Colors.primary700}
-          />
-          <Text style={[styles.tabText, tab === "tradein" && styles.tabTextActive]}>
-            Trade-In Orders
-          </Text>
-        </TouchableOpacity>
       </View>
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>
-          {tab === "tasks" ? "Task List" : "Trade-In Orders"}
-        </Text>
-        <Text style={styles.sectionSubTitle}>
-          {tab === "tasks" ? orderedTasks.length : orderedTradeInOrders.length} items
-        </Text>
-      </View>
-
-      <View style={styles.filterBarWrap}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterContainer}
+        <View>
+          <Text style={styles.sectionTitle}>Upcoming Tasks</Text>
+          <Text style={styles.sectionSubTitle}>
+            {showAll
+              ? `${getFilterLabel(selectedGroup, selectedSubStatus)} · ${orderedTasks.length}`
+              : `Showing ${visibleTasks.length} tasks`}
+          </Text>
+        </View>
+        <TouchableOpacity
+          onPress={() => {
+            if (showAll) {
+              setSelectedGroup("all");
+              setSelectedSubStatus(null);
+              setOpenSubGroup(null);
+            }
+            setShowAll((prev) => !prev);
+          }}
+          activeOpacity={0.85}
         >
-          {tab === "tasks"
-            ? DELIVERY_FILTERS.map((filter) => {
-                const active = selectedStatus === filter.value;
-                return (
-                  <TouchableOpacity
-                    key={filter.value}
-                    style={[styles.filterChip, active && styles.filterChipActive]}
-                    activeOpacity={0.85}
-                    onPress={() => setSelectedStatus(filter.value)}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.filterText, active && styles.filterTextActive]}
-                    >
-                      {filter.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })
-            : TRADEIN_FILTERS.map((filter) => {
-                const active = selectedTradeInStatus === filter.value;
-                return (
-                  <TouchableOpacity
-                    key={filter.value}
-                    style={[styles.filterChip, active && styles.filterChipActive]}
-                    activeOpacity={0.85}
-                    onPress={() => setSelectedTradeInStatus(filter.value)}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.filterText, active && styles.filterTextActive]}
-                    >
-                      {filter.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-        </ScrollView>
+          <Text style={styles.sectionAction}>
+            {showAll ? "Collapse" : "See all"}
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      {tab === "tasks" ? (
-        <FlatList
-          data={orderedTasks}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TaskRow
-              item={item}
-              statusLabel={DELIVERY_STATUS_LABELS[item.status]}
-              onPress={() => navigation.navigate("TaskDetail", { taskId: item.id, type: "task" })}
-            />
-          )}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              colors={[Colors.primary700]}
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              <Ionicons name="cube-outline" size={36} color={Colors.gray400} />
-              <Text style={styles.emptyTitle}>No matching tasks</Text>
-              <Text style={styles.emptySubTitle}>Pull down to refresh the list.</Text>
+      {showAll && (
+        <View style={styles.filterBarWrap}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterContainer}
+          >
+            {MAIN_FILTERS.map((option) => {
+              const active = selectedGroup === option.value;
+              return (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.filterChip, active && styles.filterChipActive]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    if (option.hasSub) {
+                      const nextOpen =
+                        openSubGroup === option.value ? null : option.value;
+                      setOpenSubGroup(nextOpen as "delivering" | null);
+                      setSelectedGroup(option.value);
+                      if (nextOpen !== option.value) {
+                        setSelectedSubStatus(null);
+                      }
+                    } else {
+                      setSelectedGroup(option.value);
+                      setSelectedSubStatus(null);
+                      setOpenSubGroup(null);
+                    }
+                  }}
+                >
+                  <Text
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                    style={[
+                      styles.filterChipText,
+                      active && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {openSubGroup === "delivering" && (
+            <View style={styles.subFilterBarWrap}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterContainer}
+              >
+                {SUB_FILTERS.delivering.map((option) => {
+                  const active = selectedSubStatus === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.subFilterChip,
+                        active && styles.filterChipActive,
+                      ]}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        setSelectedGroup("delivering");
+                        setSelectedSubStatus(option.value);
+                      }}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                        style={[
+                          styles.filterChipText,
+                          active && styles.filterChipTextActive,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
-          }
-        />
-      ) : (
-        <>
-          {tradeInLoading ? (
-            <View style={styles.loadingWrap}>
-              <ActivityIndicator size="large" color={Colors.primary700} />
-              <Text style={styles.loadingText}>Loading Trade-In orders...</Text>
-            </View>
-          ) : (
-            <FlatList
-              data={orderedTradeInOrders}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => (
-                <TradeInOrderRow
-                  item={item}
-                  statusLabel={TRADEIN_STATUS_LABELS[item.status]}
-                  onPress={() => navigation.navigate("TaskDetail", { taskId: item.id, type: "tradein" })}
-                />
-              )}
-              contentContainerStyle={styles.listContent}
-              showsVerticalScrollIndicator={false}
-              refreshControl={
-                <RefreshControl
-                  refreshing={refreshing}
-                  onRefresh={handleRefresh}
-                  colors={[Colors.primary700]}
-                />
-              }
-              ListEmptyComponent={
-                <View style={styles.emptyWrap}>
-                  <MaterialCommunityIcons name="handshake-outline" size={36} color={Colors.gray400} />
-                  <Text style={styles.emptyTitle}>No Trade-In orders</Text>
-                  <Text style={styles.emptySubTitle}>Pull down to refresh the list.</Text>
-                </View>
-              }
-            />
           )}
-        </>
+        </View>
       )}
+
+      <FlatList
+        data={displayTasks}
+        keyExtractor={(item) => item.shippingTaskId}
+        renderItem={renderTask}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            colors={[Colors.primary700]}
+          />
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyWrap}>
+            <Ionicons
+              name="clipboard-outline"
+              size={36}
+              color={Colors.gray400}
+            />
+            <Text style={styles.emptyTitle}>No jobs available.</Text>
+            <Text style={styles.emptySubTitle}>
+              Pull down to refresh the list.
+            </Text>
+          </View>
+        }
+      />
     </SafeAreaView>
-  );
-}
-
-function TaskRow({
-  item,
-  statusLabel,
-  onPress,
-}: {
-  item: Task;
-  statusLabel: string;
-  onPress: () => void;
-}) {
-  const statusStyle = getStatusStyle(item.status);
-  const productLabel = (item.products || [])
-    .map((product) => product.name?.trim())
-    .filter(Boolean)
-    .join(", ");
-
-  return (
-    <TouchableOpacity style={styles.card} activeOpacity={0.86} onPress={onPress}>
-      <View style={styles.cardTopRow}>
-        <View style={styles.badgeRow}>
-          <View style={styles.iconWrap}>
-            <MaterialCommunityIcons
-              name="truck-delivery-outline"
-              size={18}
-              color={Colors.primary700}
-            />
-          </View>
-          <Text style={styles.cardCode}>{item.taskCode}</Text>
-        </View>
-
-        <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}> 
-          <Text style={[styles.statusText, { color: statusStyle.text }]}>
-            {statusLabel}
-          </Text>
-        </View>
-      </View>
-
-      <Text style={styles.cardTitle}>{item.title}</Text>
-
-      <View style={styles.metaRow}>
-        <Ionicons name="person-outline" size={16} color={Colors.primary700} />
-        <Text style={styles.metaText} numberOfLines={1}>
-          {item.customer.name || "No customer available"}
-        </Text>
-      </View>
-
-      <View style={styles.metaRow}>
-        <Ionicons name="document-text-outline" size={16} color={Colors.primary700} />
-        <Text style={styles.metaText} numberOfLines={1}>
-          {productLabel || "No products available"}
-        </Text>
-      </View>
-
-      <View style={styles.cardBottomRow}>
-        <View style={styles.metaRowInline}>
-          <Ionicons name="time-outline" size={16} color={Colors.primary700} />
-          <Text style={styles.metaText}>{formatSchedule(item.dueDate, item.dueTime)}</Text>
-        </View>
-
-        <Ionicons name="chevron-forward" size={18} color={Colors.primary700} />
-      </View>
-    </TouchableOpacity>
-  );
-}
-
-function TradeInOrderRow({
-  item,
-  statusLabel,
-  onPress,
-}: {
-  item: TradeInOrder;
-  statusLabel: string;
-  onPress: () => void;
-}) {
-  const statusStyle = getTradeInStatusStyle(item.status);
-  const deviceLabel = item.devices.oldDevice
-    ? `${item.devices.oldDevice.name} → ${item.devices.newDevice?.name || "New Device"}`
-    : "Trade-In Order";
-
-  return (
-    <TouchableOpacity style={styles.card} activeOpacity={0.86} onPress={onPress}>
-      <View style={styles.cardTopRow}>
-        <View style={styles.badgeRow}>
-          <View style={styles.iconWrap}>
-            <MaterialCommunityIcons
-              name="handshake"
-              size={18}
-              color={Colors.primary700}
-            />
-          </View>
-          <Text style={styles.cardCode}>{item.orderCode}</Text>
-        </View>
-
-        <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
-          <Text style={[styles.statusText, { color: statusStyle.text }]}>
-            {statusLabel}
-          </Text>
-        </View>
-      </View>
-
-      <Text style={styles.cardTitle}>{deviceLabel}</Text>
-
-      <View style={styles.metaRow}>
-        <Ionicons name="person-outline" size={16} color={Colors.primary700} />
-        <Text style={styles.metaText} numberOfLines={1}>
-          {item.customer.name || "No customer available"}
-        </Text>
-      </View>
-
-      <View style={styles.metaRow}>
-        <Ionicons name="location-outline" size={16} color={Colors.primary700} />
-        <Text style={styles.metaText} numberOfLines={1}>
-          {item.customer.address || "No address available"}
-        </Text>
-      </View>
-
-      <View style={styles.cardBottomRow}>
-        <View style={styles.metaRowInline}>
-          <Ionicons name="call-outline" size={16} color={Colors.primary700} />
-          <Text style={styles.metaText}>{item.customer.phone}</Text>
-        </View>
-
-        <Ionicons name="chevron-forward" size={18} color={Colors.primary700} />
-      </View>
-    </TouchableOpacity>
   );
 }
 
@@ -487,62 +568,49 @@ function StatCard({ label, value }: { label: string; value: number }) {
   );
 }
 
-function getStatusStyle(status: TaskStatus) {
-  switch (status) {
-    case "delivering":
-      return { bg: "#DBEAFE", text: "#1D4ED8" };
-    case "arrived":
-      return { bg: "#E0F2FE", text: "#0369A1" };
-    case "delivered":
-      return { bg: "#DCFCE7", text: "#166534" };
-    case "returned":
-      return { bg: "#FEE2E2", text: "#B91C1C" };
-    default:
-      return { bg: "#FEF3C7", text: "#92400E" };
-  }
-}
-
-function getTradeInStatusStyle(status: TradeInOrderStatus) {
-  switch (status) {
-    case "processing":
-      return { bg: "#DBEAFE", text: "#1D4ED8" };
-    case "ready_for_delivery":
-      return { bg: "#FEE2E2", text: "#B91C1C" };
-    case "delivered":
-      return { bg: "#E0F2FE", text: "#0369A1" };
-    case "completed":
-      return { bg: "#DCFCE7", text: "#166534" };
-    case "cancelled":
-      return { bg: "#F3F4F6", text: "#6B7280" };
-    default:
-      return { bg: "#FEF3C7", text: "#92400E" };
-  }
-}
-
 function toTimestamp(date?: string, time?: string) {
-  if (!date) return Number.MAX_SAFE_INTEGER;
-  const parsed = new Date(`${date}T${time || "23:59"}:00`);
-  return Number.isNaN(parsed.getTime()) ? Number.MAX_SAFE_INTEGER : parsed.getTime();
+  if (!date) return 0;
+  const safeTime =
+    time && /^\d{2}:\d{2}$/.test(time) ? `${time}:00` : "23:59:00";
+  const parsed = new Date(`${date}T${safeTime}`);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
 }
 
-function formatSchedule(date?: string, time?: string) {
-  if (!date) return "No delivery schedule available.";
-  const dateText = formatDate(date);
-  return time ? `${dateText} • ${time}` : dateText;
+function formatDateTimeDisplay(dateText?: string, timeText?: string) {
+  if (!dateText) return "--/--/----";
+  const date = formatDate(dateText);
+  if (timeText && /^\d{2}:\d{2}$/.test(timeText)) {
+    return `${date} • ${timeText}`;
+  }
+  if (timeText) {
+    return `${date} • ${formatTime(timeText)}`;
+  }
+  return date;
+}
+
+function formatItemProductLine(task: UIShippingTask): string | null {
+  const labels = new Set<string>();
+  if (task.itemName?.trim()) labels.add(task.itemName.trim());
+  for (const p of task.products ?? []) {
+    const n = p.name?.trim();
+    if (n) labels.add(n);
+  }
+  return labels.size > 0 ? [...labels].join(", ") : null;
 }
 
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#EEF3F8",
+    backgroundColor: "#EEF2F6",
   },
   hero: {
     backgroundColor: Colors.primary900,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
     paddingHorizontal: Spacing.base,
     paddingTop: Spacing.xl,
     paddingBottom: Spacing.lg,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
+    ...Shadow.base,
   },
   heroEyebrow: {
     color: Colors.primary100,
@@ -586,46 +654,69 @@ const styles = StyleSheet.create({
     fontSize: Typography.sm,
   },
   sectionHeader: {
-    paddingHorizontal: Spacing.base,
-    paddingTop: Spacing.base,
+    marginTop: Spacing.base,
+    marginBottom: Spacing.sm,
+    marginHorizontal: Spacing.base,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
   sectionTitle: {
-    color: Colors.primary900,
-    fontSize: Typography.xl,
+    color: "#122B52",
+    fontSize: Typography.lg,
     fontWeight: "700",
   },
   sectionSubTitle: {
-    color: Colors.gray500,
+    marginTop: 2,
+    color: "#4C668A",
+    fontSize: Typography.xs,
+    fontWeight: "400",
+  },
+  sectionAction: {
+    color: Colors.primary500,
     fontSize: Typography.sm,
     fontWeight: "600",
   },
   filterBarWrap: {
     marginHorizontal: Spacing.base,
-    marginTop: Spacing.base,
     marginBottom: Spacing.sm,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#D8E4F0",
-    backgroundColor: "#F7FAFD",
   },
   filterContainer: {
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    paddingHorizontal: 2,
+    paddingVertical: 9,
     alignItems: "center",
   },
   filterChip: {
-    minWidth: 88,
-    height: 40,
-    paddingHorizontal: 14,
+    height: 36,
+    minHeight: 36,
+    maxHeight: 36,
+    paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "#EAF0F6",
+    backgroundColor: "#E7EDF4",
     borderWidth: 1,
-    borderColor: "#D8E4F0",
-    alignItems: "center",
+    borderColor: "#D2DDEB",
     justifyContent: "center",
+    alignItems: "center",
+    marginRight: 8,
+    alignSelf: "center",
+  },
+  subFilterBarWrap: {
+    marginTop: -3,
+    marginLeft: 10,
+    marginRight: Spacing.base,
+    borderRadius: 999,
+    paddingVertical: 6,
+  },
+  subFilterChip: {
+    height: 32,
+    minHeight: 32,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: "#F3F7FD",
+    borderWidth: 1,
+    borderColor: "#D2DDEB",
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: 8,
     alignSelf: "center",
   },
@@ -633,148 +724,106 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary700,
     borderColor: Colors.primary700,
   },
-  filterText: {
-    color: Colors.primary700,
+  filterChipText: {
+    color: "#35577F",
     fontSize: Typography.sm,
     fontWeight: "600",
-    textAlign: "center",
+    lineHeight: 18,
   },
-  filterTextActive: {
+  filterChipTextActive: {
     color: Colors.white,
   },
   listContent: {
     paddingHorizontal: Spacing.base,
-    paddingBottom: Spacing["3xl"],
+    paddingTop: 2,
+    paddingBottom: Spacing.xl,
   },
-  card: {
-    backgroundColor: Colors.white,
-    borderRadius: 20,
+  taskCard: {
+    backgroundColor: "#F9FBFD",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#DCE4ED",
     padding: Spacing.base,
     marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: "#D9E4EF",
     ...Shadow.sm,
   },
-  cardTopRow: {
+  taskTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    gap: 10,
   },
-  badgeRow: {
+  typeRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    flex: 1,
+    gap: 6,
   },
-  iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: Colors.primary50,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cardCode: {
-    color: Colors.gray500,
+  typeLabel: {
+    color: "#31527B",
     fontSize: Typography.sm,
-    fontWeight: "700",
+    fontWeight: "500",
+    maxWidth: 150,
     flexShrink: 1,
   },
+  priorityDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
   statusBadge: {
-    borderRadius: 999,
+    borderRadius: 14,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5,
+    maxWidth: "45%",
+    alignItems: "center",
   },
-  statusText: {
-    fontSize: Typography.sm,
-    fontWeight: "700",
+  statusBadgeText: {
+    fontSize: Typography.xs,
+    fontWeight: "600",
+    lineHeight: 14,
   },
-  cardTitle: {
-    marginTop: 12,
-    color: Colors.primary900,
+  taskTitle: {
+    color: "#1F3C65",
     fontSize: Typography.lg,
-    fontWeight: "700",
-    lineHeight: 24,
+    fontWeight: "600",
+    marginTop: 10,
+    marginBottom: 10,
   },
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    marginTop: 10,
+    gap: 6,
   },
-  metaRowInline: {
+  metaRowProducts: {
+    marginTop: 6,
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flex: 1,
+    alignItems: "flex-start",
+    gap: 6,
   },
-  metaText: {
-    flex: 1,
-    color: Colors.gray700,
-    fontSize: Typography.base,
-  },
-  cardBottomRow: {
+  metaRowBottom: {
+    marginTop: 6,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 12,
-    gap: 12,
+  },
+  metaText: {
+    color: "#3A5C8F",
+    fontSize: Typography.sm,
+    fontWeight: "500",
+    flexShrink: 1,
   },
   emptyWrap: {
+    marginTop: 44,
     alignItems: "center",
-    paddingVertical: Spacing["3xl"],
   },
   emptyTitle: {
-    marginTop: 10,
+    marginTop: 8,
     color: Colors.gray700,
     fontSize: Typography.md,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   emptySubTitle: {
     marginTop: 4,
     color: Colors.gray500,
     fontSize: Typography.base,
-  },
-  tabBar: {
-    flexDirection: "row",
-    marginHorizontal: Spacing.base,
-    marginTop: Spacing.base,
-    backgroundColor: "#F7FAFD",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#D8E4F0",
-    padding: 4,
-  },
-  tabButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  tabButtonActive: {
-    backgroundColor: Colors.primary700,
-  },
-  tabText: {
-    color: Colors.primary700,
-    fontSize: Typography.sm,
-    fontWeight: "600",
-  },
-  tabTextActive: {
-    color: Colors.white,
-  },
-  loadingWrap: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: Spacing["3xl"],
-  },
-  loadingText: {
-    marginTop: Spacing.base,
-    color: Colors.gray600,
-    fontSize: Typography.sm,
   },
 });

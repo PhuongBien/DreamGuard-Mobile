@@ -167,18 +167,37 @@ const splitDateTime = (
 const normalizeStatus = (value: unknown): TaskStatus => {
   const raw = String(value ?? "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/\s+/g, "");
 
-  // Backend exact values: Pending / CheckedIn / Processing / CheckedOut / Completed / ForcedCancelled
+  // Service task + order-adjacent statuses from backend (mixed casing / spacing)
+  if (raw === "pending") return "pending";
+  if (raw === "onhold") return "on_hold";
+
   if (raw === "checkedin") return "checked_in";
-  if (raw === "inprogress") return "in_progress";
-  if (raw === "processing") return "in_progress";
+  if (raw === "inprogress" || raw === "processing") return "in_progress";
   if (raw === "checkedout") return "checked_out";
   if (raw === "completed") return "completed";
+
+  if (raw === "delivering") return "delivering";
+  if (raw === "arrived") return "arrived";
+  if (raw === "delivered") return "delivered";
+  if (raw === "returned" || raw === "returning" || raw === "failed") {
+    return "returned";
+  }
+  if (raw === "exchangerequested" || raw === "exchange_requested") {
+    return "exchange_requested";
+  }
 
   if (raw === "cancelled" || raw === "canceled" || raw === "forcedcancelled") {
     return "cancelled";
   }
+
+  if (raw.includes("return")) return "returned";
+  if (raw.includes("exchange") && raw.includes("request")) {
+    return "exchange_requested";
+  }
+  if (raw.includes("cancel")) return "cancelled";
 
   return "pending";
 };
@@ -333,7 +352,14 @@ const normalizeTask = (input: unknown): Task => {
   const orderItems: any[] = Array.isArray(raw.serviceOrderItems)
     ? raw.serviceOrderItems
     : [];
-  const firstItem = orderItems.length > 0 ? orderItems[0] : null;
+  const orderItemFallback = isRecord(raw.orderItem) ? raw.orderItem : null;
+  const loneItemName = String(
+    raw.itemName ??
+      orderItemFallback?.itemName ??
+      orderItemFallback?.name ??
+      "",
+  ).trim();
+  const firstItem = orderItems.length > 0 ? orderItems[0] : orderItemFallback;
   const servicePackageMapping = firstItem
     ? {
         servicePackageMappingId: String(
@@ -448,22 +474,37 @@ const normalizeTask = (input: unknown): Task => {
     uploadedAt: toIso(photo.uploadedAt, nowIso),
   }));
 
-  // ── Products from serviceOrderItems ───────────────────────────────────────
-  const products = orderItems.map((item: any, index: number) => ({
-    id: String(
-      item?.serviceOrderItemId ?? item?.id ?? `product_${taskId}_${index}`,
-    ),
-    name:
-      [item?.servicePackageName, item?.productTypeName]
-        .filter(Boolean)
-        .join(" – ") || "Service",
-    type: String(item?.productTypeName ?? "service"),
-    quantity: Number(item?.quantity) || 1,
-    description:
-      item?.totalPrice !== undefined
-        ? `${new Intl.NumberFormat("en-US").format(Number(item.totalPrice))} ₫`
-        : undefined,
-  }));
+  // ── Products from serviceOrderItems (prefer API itemName / name per line) ─
+  const products =
+    orderItems.length > 0
+      ? orderItems.map((item: any, index: number) => {
+          const byItemName = String(item?.itemName ?? item?.name ?? "").trim();
+          const byPackage = [item?.servicePackageName, item?.productTypeName]
+            .filter(Boolean)
+            .join(" – ");
+          return {
+            id: String(
+              item?.serviceOrderItemId ?? item?.id ?? `product_${taskId}_${index}`,
+            ),
+            name: byItemName || byPackage || "Service",
+            type: String(item?.productTypeName ?? "service"),
+            quantity: Number(item?.quantity) || 1,
+            description:
+              item?.totalPrice !== undefined
+                ? `${new Intl.NumberFormat("en-US").format(Number(item.totalPrice))} ₫`
+                : undefined,
+          };
+        })
+      : loneItemName
+        ? [
+            {
+              id: `product_${taskId}_0`,
+              name: loneItemName,
+              type: "service",
+              quantity: 1,
+            },
+          ]
+        : [];
 
   return {
     id: taskId,
@@ -504,6 +545,13 @@ const normalizeTask = (input: unknown): Task => {
       address: customerAddress,
       note: customerNote || undefined,
     },
+    itemName:
+      String(
+        orderItems[0]?.itemName ??
+          orderItemFallback?.itemName ??
+          raw.itemName ??
+          "",
+      ).trim() || undefined,
     products,
     servicePackageMapping,
     photos,

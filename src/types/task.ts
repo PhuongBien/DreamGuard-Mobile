@@ -9,6 +9,7 @@ export type TaskStatus =
   | "checked_out"
   | "delivered"
   | "returned"
+  | "exchange_requested"
   | "completed"
   | "cancelled"
   | "on_hold";
@@ -150,6 +151,8 @@ export interface Task {
   estimatedDuration?: number;
 
   orderId?: string;
+  /** Primary line item label from API (e.g. order itemName) for list/detail display */
+  itemName?: string;
   tags?: string[];
   serviceOrderStatus?: string;
   paymentMethod?: string;
@@ -179,4 +182,19 @@ export interface Task {
   relatedImageUrls?: string[];
 
   isSynced?: boolean;
+}
+
+export interface ShippingTask {
+  shippingTaskId: string;
+  staffId: string;
+  orderId?: string | null;
+  tradeInOrderId?: string | null;
+  orderCode?: string;
+  status: string;
+
+  shippingDate?: string | null;
+  completionDate?: string | null;
+  staffNote?: string;
+
+  evidences: any[];
 }

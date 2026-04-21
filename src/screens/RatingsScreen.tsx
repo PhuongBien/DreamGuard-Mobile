@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ProfileStackParamList } from "../types/navigation";
 
@@ -377,7 +377,7 @@ export default function RatingsScreen() {
 
   const loadRatings = useCallback(
     async (silent = false) => {
-      if (!user?.id) return;
+      if (!user?.id || user.role !== "cleaner") return;
       if (!silent) setLoading(true);
       setError(null);
       try {
@@ -445,7 +445,15 @@ export default function RatingsScreen() {
         setRefreshing(false);
       }
     },
-    [user?.id],
+    [user?.id, user?.role],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (user && user.role !== "cleaner") {
+        navigation.goBack();
+      }
+    }, [user, navigation]),
   );
 
   useEffect(() => {

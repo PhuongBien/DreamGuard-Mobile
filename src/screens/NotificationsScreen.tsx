@@ -3,6 +3,7 @@
 // ============================================================
 
 import React, { useState, useCallback, useEffect } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
   Text,
@@ -12,6 +13,7 @@ import {
   StatusBar,
   RefreshControl,
 } from "react-native";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import {
   Colors,
   Typography,
@@ -20,7 +22,13 @@ import {
   Shadow,
 } from "../constants/theme";
 import { EmptyState } from "../components/shared";
-import { Notification, NotificationType } from "../types";
+import {
+  Notification,
+  NotificationType,
+  BackendNotificationItem,
+} from "../types";
+import type { UserRole } from "../types/user";
+import type { NotificationStackParamList } from "../types/navigation";
 import {
   fetchNotifications,
   markAllNotificationsRead,
@@ -28,6 +36,9 @@ import {
 } from "../utils/api";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { formatDate } from "../utils/date";
+import { useAuth } from "../context/AuthContext";
+import { useNotificationBadge } from "../context/NotificationBadgeContext";
+import { parseNotificationDeepLink } from "../utils/notificationDeepLink";
 
 import { Ionicons } from "@expo/vector-icons";
 
@@ -42,32 +53,57 @@ const TYPE_CONFIG: Record<
   system: { icon: "settings-outline", color: Colors.gray500 },
 };
 
-interface NotificationsScreenProps {
-  onSelectTask?: (taskId: string) => void;
+function actionTypeToNotificationType(actionType: string): NotificationType {
+  const a = actionType.toLowerCase();
+  if (
+    a.includes("new") &&
+    (a.includes("task") || a.includes("assign") || a.includes("shipping"))
+  ) {
+    return "new_task";
+  }
+  if (a.includes("cancel")) return "task_cancelled";
+  if (a.includes("remind")) return "reminder";
+  if (
+    a.includes("task") ||
+    a.includes("deliver") ||
+    a.includes("shipping") ||
+    a.includes("check")
+  ) {
+    return "task_updated";
+  }
+  return "system";
 }
 
-const isRecord = (value: unknown): value is Record<string, any> =>
-  typeof value === "object" && value !== null;
+function mapBackendToNotification(
+  item: BackendNotificationItem,
+  role: UserRole | undefined,
+): Notification {
+  const link = parseNotificationDeepLink(
+    item.message,
+    item.actionType,
+    role,
+  );
+  return {
+    id: item.notificationId,
+    type: actionTypeToNotificationType(item.actionType),
+    title: item.actionType,
+    body: item.message,
+    taskId: link.taskId,
+    shippingTaskId: link.shippingTaskId,
+    tradeInOrderId: link.tradeInOrderId,
+    isRead: item.isRead,
+    createdAt: item.createdAt,
+  };
+}
 
-const extractNotificationItems = (payload: unknown): Notification[] => {
-  if (Array.isArray(payload)) return payload as Notification[];
-  if (!isRecord(payload)) return [];
+type Props = NativeStackScreenProps<
+  NotificationStackParamList,
+  "NotificationList"
+>;
 
-  if (Array.isArray(payload.items)) return payload.items as Notification[];
-  if (Array.isArray(payload.results)) return payload.results as Notification[];
-
-  if (isRecord(payload.data)) {
-    const nested = payload.data;
-    if (Array.isArray(nested.items)) return nested.items as Notification[];
-    if (Array.isArray(nested.results)) return nested.results as Notification[];
-  }
-
-  return [];
-};
-
-export default function NotificationsScreen({
-  onSelectTask,
-}: NotificationsScreenProps) {
+export default function NotificationsScreen({ navigation }: Props) {
+  const { user } = useAuth();
+  const { refreshBadge, acknowledgeTabViewed } = useNotificationBadge();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -78,34 +114,59 @@ export default function NotificationsScreen({
     setLoading(true);
     try {
       const response = await fetchNotifications(1, 50);
-      setNotifications(extractNotificationItems(response.data));
+      const page = response.data;
+      const items = Array.isArray(page?.items) ? page.items : [];
+      setNotifications(
+        items.map((item) => mapBackendToNotification(item, user?.role)),
+      );
     } catch (error) {
       console.log("Load notifications error:", error);
       setNotifications([]);
     } finally {
       setLoading(false);
+      void refreshBadge();
     }
-  }, []);
+  }, [user?.role, refreshBadge]);
 
   useEffect(() => {
     loadNotifications();
   }, [loadNotifications]);
 
-  // 📌 [API: PATCH /notifications/:id/read]
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      (async () => {
+        const n = await refreshBadge();
+        if (active) acknowledgeTabViewed(n);
+      })();
+      return () => {
+        active = false;
+      };
+    }, [refreshBadge, acknowledgeTabViewed]),
+  );
+
   const markRead = useCallback(async (id: string) => {
-    await markNotificationRead(id);
+    try {
+      await markNotificationRead(id);
+    } catch {
+      // Still update locally so UX isn’t blocked if PATCH differs on BE.
+    }
     setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
+      prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)),
     );
-  }, []);
+    void refreshBadge();
+  }, [refreshBadge]);
 
-  // 📌 [API: PATCH /notifications/read-all]
   const markAllRead = useCallback(async () => {
-    await markAllNotificationsRead();
+    try {
+      await markAllNotificationsRead();
+    } catch {
+      // Local fallback below
+    }
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-  }, []);
+    void refreshBadge();
+  }, [refreshBadge]);
 
-  // 📌 [API: GET /notifications] — re-fetch on pull
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadNotifications();
@@ -113,11 +174,22 @@ export default function NotificationsScreen({
   }, [loadNotifications]);
 
   const handleNotifPress = async (notif: Notification) => {
-    await markRead(notif.id);
-    if (notif.taskId && onSelectTask) {
-      onSelectTask(notif.taskId);
+    let nextRead = notif.isRead;
+    if (!notif.isRead) {
+      await markRead(notif.id);
+      nextRead = true;
     }
+    navigation.navigate("NotificationDetail", {
+      notificationId: notif.id,
+      actionType: notif.title,
+      message: notif.body,
+      createdAt: notif.createdAt,
+      isRead: nextRead,
+    });
   };
+
+  const hasLinkedEntity = (n: Notification) =>
+    !!(n.taskId || n.shippingTaskId || n.tradeInOrderId);
 
   const renderNotif = ({ item }: { item: Notification }) => {
     const cfg = TYPE_CONFIG[item.type] || TYPE_CONFIG.system;
@@ -127,15 +199,10 @@ export default function NotificationsScreen({
         onPress={() => handleNotifPress(item)}
         activeOpacity={0.75}
       >
-        {/* Icon */}
-        {/* <View style={[styles.notifIcon, { backgroundColor: cfg.color + '18' }]}>
-          <Text style={{ fontSize: 22 }}>{cfg.icon}</Text>
-        </View> */}
         <View style={[styles.notifIcon, { backgroundColor: cfg.color + "15" }]}>
           <Ionicons name={cfg.icon} size={22} color={cfg.color} />
         </View>
 
-        {/* Content */}
         <View style={styles.notifContent}>
           <View style={styles.notifTopRow}>
             <Text
@@ -154,12 +221,13 @@ export default function NotificationsScreen({
           <Text style={styles.notifBody} numberOfLines={2}>
             {item.body}
           </Text>
-          {item.taskId && (
-            <Text style={styles.notifLink}>View task details →</Text>
+          {hasLinkedEntity(item) && (
+            <Text style={styles.notifLink}>
+              {item.tradeInOrderId ? "View trade-in →" : "View task →"}
+            </Text>
           )}
         </View>
 
-        {/* Unread dot */}
         {!item.isRead && <View style={styles.unreadDot} />}
       </TouchableOpacity>
     );
@@ -169,7 +237,6 @@ export default function NotificationsScreen({
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
 
-      {/* Header */}
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Notification</Text>
@@ -222,15 +289,15 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.gray50 },
 
   header: {
-  flexDirection: 'row',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  backgroundColor: Colors.primary900,
-  paddingHorizontal: Spacing.base,
-  paddingVertical: 18,
-  borderBottomLeftRadius: 20,
-  borderBottomRightRadius: 20,
-},
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: Colors.primary900,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: 18,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+  },
   headerTitle: {
     fontSize: Typography.xl,
     fontWeight: "800",

@@ -139,6 +139,7 @@ export default function ProfileScreen() {
   ];
 
   const handleViewRatings = () => navigation.navigate("Ratings");
+  const canViewMyRatings = displayUser.role === "cleaner";
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -187,30 +188,32 @@ export default function ProfileScreen() {
 
         {/* CONTENT */}
         <View style={styles.section}>
-          <SectionCard >
-            <TouchableOpacity
-              style={styles.profileMenuButton}
-              onPress={handleViewRatings}
-              activeOpacity={0.7}
-            >
-              <View style={styles.profileMenuRow}>
-                <View style={styles.menuIconWrap}>
-                  <Ionicons name="star-outline" size={20} color={Colors.primary700} />
+          {canViewMyRatings ? (
+            <SectionCard>
+              <TouchableOpacity
+                style={styles.profileMenuButton}
+                onPress={handleViewRatings}
+                activeOpacity={0.7}
+              >
+                <View style={styles.profileMenuRow}>
+                  <View style={styles.menuIconWrap}>
+                    <Ionicons name="star-outline" size={20} color={Colors.primary700} />
+                  </View>
+                  <View style={styles.menuTextWrap}>
+                    <Text style={styles.menuRowTitle}>My Ratings</Text>
+                    <Text style={styles.menuRowSubtitle}>
+                      View ratings from customers
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={20}
+                    color={Colors.gray300}
+                  />
                 </View>
-                <View style={styles.menuTextWrap}>
-                  <Text style={styles.menuRowTitle}>My Ratings</Text>
-                  <Text style={styles.menuRowSubtitle}>
-                    View ratings from customers
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={20}
-                  color={Colors.gray300}
-                />
-              </View>
-            </TouchableOpacity>
-          </SectionCard>
+              </TouchableOpacity>
+            </SectionCard>
+          ) : null}
 
           <SectionCard title="Personal Information">
             <InfoRow

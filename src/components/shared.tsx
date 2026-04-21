@@ -106,6 +106,7 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   checked_out: "Checked Out",
   delivered: "Delivered",
   returned: "Returned",
+  exchange_requested: "Exchange Requested",
   completed: "Completed",
   cancelled: "Cancelled",
   on_hold: "On Hold",
@@ -314,9 +315,7 @@ export function InfoRow({
 
       <View style={infoStyles.content}>
         <Text style={infoStyles.label}>{label}</Text>
-        <Text style={[infoStyles.value, valueStyle]}>
-          {value || "—"}
-        </Text>
+        <Text style={[infoStyles.value, valueStyle]}>{value || "—"}</Text>
       </View>
     </View>
   );
@@ -326,19 +325,23 @@ export function InfoRow({
 
 interface EmptyStateProps {
   // icon?: string;
-  icon: ReactNode;
+  // icon: ReactNode;
+  icon?: keyof typeof Ionicons.glyphMap;
   title: string;
   subtitle?: string;
   action?: { label: string; onPress: () => void };
 }
 
 export function EmptyState({ icon, title, subtitle, action }: EmptyStateProps) {
-  const renderIcon = () =>
-    typeof icon === "string" || typeof icon === "number" ? (
-      <Text style={emptyStyles.icon}>{icon}</Text>
-    ) : (
-      icon
-    );
+  const renderIcon = () => {
+    if (!icon) return null;
+
+    if (typeof icon === "string") {
+      return <Ionicons name={icon as any} size={64} color={Colors.gray300} />;
+    }
+
+    return icon;
+  };
 
   return (
     <View style={emptyStyles.wrap}>
@@ -352,7 +355,7 @@ export function EmptyState({ icon, title, subtitle, action }: EmptyStateProps) {
           title={action.label}
           onPress={action.onPress}
           variant="outline"
-          style={{ marginTop: 16 }}
+          style={{ marginTop: 24 }}
         />
       )}
     </View>

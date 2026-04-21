@@ -42,6 +42,7 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   arrived: "Arrived",
   delivered: "Delivered",
   returned: "Returned",
+  exchange_requested: "Exchange Requested",
 };
 
 const STATUS_BADGES: Record<TaskStatus, { bg: string; text: string }> = {
@@ -56,11 +57,16 @@ const STATUS_BADGES: Record<TaskStatus, { bg: string; text: string }> = {
   arrived: { bg: "#E0F2FE", text: "#0369A1" },
   delivered: { bg: "#DCFCE7", text: "#166534" },
   returned: { bg: "#FEE2E2", text: "#B91C1C" },
+  exchange_requested: { bg: "#ECEEF2", text: "#66748A" },
 };
 
 type MainFilter = "all" | "pending" | "active" | "completed" | "cancelled";
 
-const MAIN_FILTERS: Array<{ value: MainFilter; label: string; hasSub?: boolean }> = [
+const MAIN_FILTERS: Array<{
+  value: MainFilter;
+  label: string;
+  hasSub?: boolean;
+}> = [
   { value: "all", label: "All" },
   { value: "pending", label: "Pending ▾", hasSub: true },
   { value: "active", label: "Active ▾", hasSub: true },
@@ -68,7 +74,10 @@ const MAIN_FILTERS: Array<{ value: MainFilter; label: string; hasSub?: boolean }
   { value: "cancelled", label: "Canceled" },
 ];
 
-const SUB_FILTERS: Record<"pending" | "active", Array<{ value: TaskStatus; label: string }>> = {
+const SUB_FILTERS: Record<
+  "pending" | "active",
+  Array<{ value: TaskStatus; label: string }>
+> = {
   pending: [
     { value: "pending", label: "Pending" },
     { value: "on_hold", label: "On hold" },
@@ -90,6 +99,7 @@ const GROUP_STATUS_MAP: Record<MainFilter, TaskStatus[]> = {
     "checked_out",
     "delivered",
     "returned",
+    "exchange_requested",
     "completed",
     "cancelled",
     "on_hold",
@@ -145,8 +155,12 @@ export default function TaskListScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<MainFilter>("all");
-  const [selectedSubStatus, setSelectedSubStatus] = useState<TaskStatus | null>(null);
-  const [openSubGroup, setOpenSubGroup] = useState<"pending" | "active" | null>(null);
+  const [selectedSubStatus, setSelectedSubStatus] = useState<TaskStatus | null>(
+    null,
+  );
+  const [openSubGroup, setOpenSubGroup] = useState<"pending" | "active" | null>(
+    null,
+  );
 
   const filteredTasks = useMemo(() => {
     if (!showAll) return tasks;
@@ -207,6 +221,7 @@ export default function TaskListScreen({ navigation }: Props) {
     const priority = item.priority || "medium";
     const displayAddress =
       formatVietnamAddress(item.customer.address) || "No address available";
+    // const productLine = formatProductNames(item);
 
     const priorityDot =
       priority === "high" || priority === "urgent" ? "#E54848" : "#E9A522";
@@ -256,6 +271,19 @@ export default function TaskListScreen({ navigation }: Props) {
           </Text>
         </View>
 
+        {/* {productLine ? (
+          <View style={styles.metaRowProducts}>
+            <Ionicons
+              name="cube-outline"
+              size={14}
+              color={Colors.primary700}
+            />
+            <Text style={styles.metaText} numberOfLines={2}>
+              {productLine}
+            </Text>
+          </View>
+        ) : null} */}
+
         <View style={styles.metaRowBottom}>
           <View style={styles.metaRow}>
             <Ionicons name="time-outline" size={14} color={Colors.primary700} />
@@ -280,7 +308,9 @@ export default function TaskListScreen({ navigation }: Props) {
 
       <View style={styles.hero}>
         <Text style={styles.heroEyebrow}>Cleaning Staff</Text>
-        <Text style={styles.heroTitle}>{user?.name || user?.fullName || "Staff"}</Text>
+        <Text style={styles.heroTitle}>
+          {user?.name || user?.fullName || "Staff"}
+        </Text>
         <Text style={styles.heroSubTitle}>
           View assigned tasks, check details, and update task status.
         </Text>
@@ -312,7 +342,9 @@ export default function TaskListScreen({ navigation }: Props) {
           }}
           activeOpacity={0.85}
         >
-          <Text style={styles.sectionAction}>{showAll ? "Collapse" : "See all"}</Text>
+          <Text style={styles.sectionAction}>
+            {showAll ? "Collapse" : "See all"}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -332,7 +364,8 @@ export default function TaskListScreen({ navigation }: Props) {
                   activeOpacity={0.85}
                   onPress={() => {
                     if (option.hasSub) {
-                      const nextOpen = openSubGroup === option.value ? null : option.value;
+                      const nextOpen =
+                        openSubGroup === option.value ? null : option.value;
                       setOpenSubGroup(nextOpen as "pending" | "active" | null);
                       setSelectedGroup(option.value);
                       if (nextOpen !== option.value) {
@@ -372,7 +405,10 @@ export default function TaskListScreen({ navigation }: Props) {
                   return (
                     <TouchableOpacity
                       key={option.value}
-                      style={[styles.subFilterChip, active && styles.filterChipActive]}
+                      style={[
+                        styles.subFilterChip,
+                        active && styles.filterChipActive,
+                      ]}
                       activeOpacity={0.85}
                       onPress={() => {
                         setSelectedGroup(openSubGroup);
@@ -467,6 +503,24 @@ function formatDateTimeDisplay(dateText?: string, timeText?: string) {
   }
   return date;
 }
+
+// function formatProductNames(task: Task): string | null {
+//   const labels = new Set<string>();
+//   if (task.itemName?.trim()) labels.add(task.itemName.trim());
+//   for (const p of task.products ?? []) {
+//     const n = p.name?.trim();
+//     if (n) labels.add(n);
+//   }
+//   if (labels.size > 0) {
+//     return [...labels].join(", ");
+//   }
+//   const packageName = task.servicePackageMapping?.servicePackage?.packageName?.trim();
+//   if (packageName) return packageName;
+//   const typeName =
+//     task.servicePackageMapping?.productType?.productTypeName?.trim();
+//   if (typeName) return typeName;
+//   return null;
+// }
 
 function getInitial(name?: string) {
   if (!name) return "N";
@@ -693,6 +747,12 @@ const styles = StyleSheet.create({
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
+  },
+  metaRowProducts: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: 6,
   },
   metaRowBottom: {

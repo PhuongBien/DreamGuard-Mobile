@@ -1,12 +1,5 @@
+import { TradeInOrder } from "../types";
 import {
-  TradeInOrder,
-  TradeInOrderStatus,
-  TradeInOrderListParams,
-  TradeInOrderSearchParams,
-} from "../types";
-import {
-  fetchTradeInWaitingOrders as apiFetchTradeInWaitingOrders,
-  searchTradeInOrders as apiSearchTradeInOrders,
   fetchTradeInOrderById as apiFetchTradeInOrderById,
   updateTradeInOrderProcessing as apiUpdateTradeInOrderProcessing,
   updateTradeInOrderDelivered as apiUpdateTradeInOrderDelivered,
@@ -19,100 +12,89 @@ const DEFAULT_PAGE_SIZE = 20;
 
 const normalizeTradeInOrder = (raw: any): TradeInOrder => {
   return {
-    id: raw.id || raw.tradeInOrderId || "",
-    tradeInOrderId: raw.tradeInOrderId,
-    orderCode: raw.orderCode || raw.code || "",
-    status: (raw.status || "pending") as TradeInOrderStatus,
-    
-    customer: {
-      id: raw.customer?.id || raw.customerId,
-      name: raw.customer?.name || raw.customerName || "",
-      phone: raw.customer?.phone || raw.customerPhone || "",
-      address: raw.customer?.address || raw.deliveryAddress || "",
-      note: raw.customer?.note || raw.customerNote,
-    },
-    
-    devices: {
-      oldDevice: raw.oldDevice ? {
-        id: raw.oldDevice.id,
-        name: raw.oldDevice.name || raw.oldDevice.model || "",
-        model: raw.oldDevice.model,
-        type: raw.oldDevice.type,
-        description: raw.oldDevice.description,
-        quantity: raw.oldDevice.quantity || 1,
-        estimatedPrice: raw.oldDevice.estimatedPrice || raw.oldDevice.price,
-      } : undefined,
-      newDevice: raw.newDevice ? {
-        id: raw.newDevice.id,
-        name: raw.newDevice.name || raw.newDevice.model || "",
-        model: raw.newDevice.model,
-        type: raw.newDevice.type,
-        description: raw.newDevice.description,
-        quantity: raw.newDevice.quantity || 1,
-        estimatedPrice: raw.newDevice.estimatedPrice || raw.newDevice.price,
-      } : undefined,
-    },
-    
-    priceAgreed: raw.priceAgreed || raw.agreementPrice || raw.totalPrice,
-    notes: raw.notes || raw.staffNotes,
-    
+    tradeInOrderId: raw.tradeInOrderId || raw.id || raw.orderId || "",
+    customerId: raw.customer?.id || raw.customerId,
+    orderId: raw.orderId,
+    orderCode: raw.orderCode || raw.code || raw.orderCode || "",
+    status: raw.status || raw.orderStatus || raw.statusDescription || "pending",
+    receiverName:
+      raw.customer?.name || raw.customerName || raw.receiverName || "",
+    phoneNumber:
+      raw.customer?.phone || raw.customerPhone || raw.phoneNumber || "",
+    address: raw.customer?.address || raw.deliveryAddress || raw.address || "",
+    description: raw.description || raw.notes || raw.staffNotes,
+    tradeInPrice: raw.tradeInPrice,
+    amountToPay: raw.amountToPay,
+    depositAmount: raw.depositAmount,
+    isGood: typeof raw.isGood === "boolean" ? raw.isGood : undefined,
+    oldProductVariantUrl:
+      typeof raw.oldProductVariantUrl === "string"
+        ? raw.oldProductVariantUrl
+        : undefined,
+    newProductVariantUrl:
+      typeof raw.newProductVariantUrl === "string"
+        ? raw.newProductVariantUrl
+        : undefined,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
-    
-    processingStartedAt: raw.processingStartedAt,
-    deliveredAt: raw.deliveredAt,
-    completedAt: raw.completedAt,
-    
-    assignedTo: raw.assignedTo || raw.staffId,
-    assignedToName: raw.assignedToName || raw.staffName,
-    
-    photos: Array.isArray(raw.photos) ? raw.photos.map((p: any) => ({
-      id: p.id,
-      url: p.url || p.imageUrl,
-      type: p.type || "device_condition",
-      uploadedAt: p.uploadedAt,
-    })) : [],
+    payments: Array.isArray(raw.payments)
+      ? raw.payments.map((payment: any) => ({
+          id: String(payment.id ?? ""),
+          orderCode: String(payment.orderCode ?? ""),
+          paymentType: String(payment.paymentType ?? payment.type ?? ""),
+          status: String(payment.status ?? ""),
+          amount: Number(payment.amount ?? payment.paidAmount ?? 0),
+          paymentMethod: String(payment.paymentMethod ?? payment.method ?? ""),
+          createdAt: String(payment.createdAt ?? ""),
+        }))
+      : undefined,
+    orderItem: raw.orderItem
+      ? {
+          id: raw.orderItem.id,
+          itemName: raw.orderItem.itemName || raw.orderItem.name || "",
+          quantity: raw.orderItem.quantity ?? 1,
+          unitPrice: raw.orderItem.unitPrice ?? raw.orderItem.price ?? 0,
+          totalPrice: raw.orderItem.totalPrice ?? raw.orderItem.price ?? 0,
+          tradeInUsedAmount:
+            raw.orderItem.tradeInUsedAmount != null
+              ? Number(raw.orderItem.tradeInUsedAmount)
+              : undefined,
+        }
+      : undefined,
+    productVariant: raw.productVariant
+      ? {
+          id: raw.productVariant.id,
+          sku: raw.productVariant.sku || raw.productVariant.code || "",
+          basePrice:
+            raw.productVariant.basePrice ?? raw.productVariant.price ?? 0,
+          salePrice:
+            raw.productVariant.salePrice ??
+            raw.productVariant.discountPrice ??
+            raw.productVariant.basePrice ??
+            0,
+          size: raw.productVariant.size,
+        }
+      : undefined,
+    tradeInImages: Array.isArray(raw.tradeInImages)
+      ? raw.tradeInImages.map((p: any) => ({
+          id: p.id,
+          imageUrl: p.imageUrl || p.url,
+        }))
+      : Array.isArray(raw.photos)
+        ? raw.photos.map((p: any) => ({
+            id: p.id,
+            imageUrl: p.imageUrl || p.url,
+          }))
+        : undefined,
   };
 };
 
 export class TradeInOrderService {
-  static async fetchWaitingOrders(
-    params: TradeInOrderListParams = {},
-  ): Promise<{ orders: TradeInOrder[]; total: number; }> {
-    const response = await apiFetchTradeInWaitingOrders(params);
-    
-    if (!response.success || !response.data) {
-      return { orders: [], total: 0 };
-    }
-
-    const { items = [], totalItems = 0 } = response.data as any;
-    const orders = Array.isArray(items)
-      ? items.map((raw) => normalizeTradeInOrder(raw))
-      : [];
-
-    return { orders, total: totalItems };
-  }
-
-  static async searchOrders(
-    params: TradeInOrderSearchParams = {},
-  ): Promise<{ orders: TradeInOrder[]; total: number; }> {
-    const response = await apiSearchTradeInOrders(params);
-    
-    if (!response.success || !response.data) {
-      return { orders: [], total: 0 };
-    }
-
-    const { items = [], totalItems = 0 } = response.data as any;
-    const orders = Array.isArray(items)
-      ? items.map((raw) => normalizeTradeInOrder(raw))
-      : [];
-
-    return { orders, total: totalItems };
-  }
+  // Fetch orders assigned to staff (waiting for staff action)
 
   static async fetchById(tradeInOrderId: string): Promise<TradeInOrder | null> {
     const response = await apiFetchTradeInOrderById(tradeInOrderId);
-    
+
     if (!response.success || !response.data) {
       return null;
     }
@@ -124,8 +106,11 @@ export class TradeInOrderService {
     tradeInOrderId: string,
     notes?: string,
   ): Promise<TradeInOrder | null> {
-    const response = await apiUpdateTradeInOrderProcessing(tradeInOrderId, notes);
-    
+    const response = await apiUpdateTradeInOrderProcessing(
+      tradeInOrderId,
+      notes,
+    );
+
     if (!response.success || !response.data) {
       return null;
     }
@@ -137,8 +122,11 @@ export class TradeInOrderService {
     tradeInOrderId: string,
     notes?: string,
   ): Promise<TradeInOrder | null> {
-    const response = await apiUpdateTradeInOrderDelivered(tradeInOrderId, notes);
-    
+    const response = await apiUpdateTradeInOrderDelivered(
+      tradeInOrderId,
+      notes,
+    );
+
     if (!response.success || !response.data) {
       return null;
     }
@@ -150,8 +138,11 @@ export class TradeInOrderService {
     tradeInOrderId: string,
     notes?: string,
   ): Promise<TradeInOrder | null> {
-    const response = await apiUpdateTradeInOrderCompleted(tradeInOrderId, notes);
-    
+    const response = await apiUpdateTradeInOrderCompleted(
+      tradeInOrderId,
+      notes,
+    );
+
     if (!response.success || !response.data) {
       return null;
     }
@@ -164,7 +155,7 @@ export class TradeInOrderService {
     reason?: string,
   ): Promise<TradeInOrder | null> {
     const response = await apiCancelTradeInOrder(tradeInOrderId, reason);
-    
+
     if (!response.success || !response.data) {
       return null;
     }
@@ -182,7 +173,7 @@ export class TradeInOrderService {
       imageUri,
       imageType,
     );
-    
+
     if (!response.success || !response.data) {
       return null;
     }

@@ -3,6 +3,7 @@ export * from "./user";
 export * from "./task";
 export * from "./trade-in";
 export * from "./notification";
+export * from "./audit-log";
 export * from "./navigation";
 export * from "./api";
 export * from "./stats";

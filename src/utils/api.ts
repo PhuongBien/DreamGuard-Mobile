@@ -3,14 +3,17 @@
 import {
   ApiResponse,
   PaginatedResponse,
+  PaymentHistoryItem,
+  PaginatedPaymentHistory,
+  ShippingTask,
+  StaffProfile,
+  VariantDetail,
   Task,
   TaskStatus,
   User,
-  Notification,
+  BackendNotificationsPage,
   TradeInOrder,
   TradeInOrderStatus,
-  TradeInOrderListParams,
-  TradeInOrderSearchParams,
 } from "../types";
 
 // CONFIG
@@ -251,7 +254,9 @@ const taskStatusToBackendStatus = (
   | "Completed"
   | "ForcedCancelled"
   | "OnHold" => {
-  const mapping: Partial<Record<TaskStatus, ReturnType<typeof taskStatusToBackendStatus>>> = {
+  const mapping: Partial<
+    Record<TaskStatus, ReturnType<typeof taskStatusToBackendStatus>>
+  > = {
     pending: "Pending",
     checked_in: "CheckedIn",
     in_progress: "Processing",
@@ -300,7 +305,12 @@ export const fetchTasks = async (params: TaskListParams = {}) => {
 const taskStatusToShippingBackendStatus = (
   status: TaskStatus,
 ): "Pending" | "Delivering" | "Arrived" | "Delivered" | "Returned" => {
-  const mapping: Partial<Record<TaskStatus, "Pending" | "Delivering" | "Arrived" | "Delivered" | "Returned">> = {
+  const mapping: Partial<
+    Record<
+      TaskStatus,
+      "Pending" | "Delivering" | "Arrived" | "Delivered" | "Returned"
+    >
+  > = {
     pending: "Pending",
     delivering: "Delivering",
     arrived: "Arrived",
@@ -331,14 +341,77 @@ export const fetchShippingTasks = (params: TaskListParams = {}) => {
     ? `/api/ShippingTasks?${queryString}`
     : "/api/ShippingTasks";
 
-  return apiFetch<PaginatedResponse<Task>>(endpoint);
+  return apiFetch<PaginatedResponse<ShippingTask>>(endpoint);
 };
 
 export const fetchShippingTaskById = (taskId: string) =>
-  apiFetch<Task>(`/api/ShippingTasks/${taskId}`);
+  apiFetch<ShippingTask>(`/api/ShippingTasks/${taskId}`);
+
+export const fetchShippingTasksByTradeInOrderId = (
+  tradeInOrderId: string,
+  pageSize = 100,
+) =>
+  apiFetch<PaginatedResponse<ShippingTask>>(
+    `/api/ShippingTasks?tradeInOrderId=${encodeURIComponent(
+      tradeInOrderId,
+    )}&pageSize=${pageSize}`,
+  );
+
+export const fetchStaffById = (staffId: string) =>
+  apiFetch<StaffProfile>(`/api/staffs/${staffId}`);
+
+export const fetchVariantById = (variantId: string) =>
+  apiFetch<VariantDetail>(`/api/variants/${variantId}`);
+
+export const fetchPaymentAdminByOrderCode = (orderCode: string) =>
+  apiFetch<PaginatedPaymentHistory>(
+    `/api/payment/admin?orderCode=${encodeURIComponent(orderCode)}`,
+  );
 
 export const fetchOrderById = (orderId: string) =>
   apiFetch<any>(`/api/order/${orderId}`);
+
+/**
+ * Staff: move service order toward Processing so shipping /delivering is allowed (e.g. from Confirmed).
+ * Backends differ: path casing, HTTP method, or plural resource name — retry only on 404.
+ */
+export async function updateOrderProcessing(
+  orderId: string,
+  notes?: string,
+): Promise<ApiResponse<any>> {
+  const body = JSON.stringify(notes ? { notes } : {});
+  const attempts: Array<{ path: string; method: "PATCH" | "PUT" }> = [
+    { path: `/api/order/${orderId}/Processing`, method: "PATCH" },
+    { path: `/api/order/${orderId}/processing`, method: "PATCH" },
+    { path: `/api/Order/${orderId}/Processing`, method: "PATCH" },
+    { path: `/api/Order/${orderId}/processing`, method: "PATCH" },
+    { path: `/api/order/${orderId}/Processing`, method: "PUT" },
+    { path: `/api/order/${orderId}/processing`, method: "PUT" },
+    { path: `/api/orders/${orderId}/processing`, method: "PATCH" },
+    { path: `/api/orders/${orderId}/Processing`, method: "PATCH" },
+  ];
+
+  let lastError: Error | null = null;
+  for (const { path, method } of attempts) {
+    try {
+      return await apiFetch<any>(path, { method, body });
+    } catch (e: any) {
+      const message = String(e?.message ?? e ?? "");
+      if (message.includes("404")) {
+        lastError = e instanceof Error ? e : new Error(message);
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  throw (
+    lastError ??
+    new Error(
+      "No Processing transition endpoint matched. Ask backend for the route to set order status from Confirmed to Processing.",
+    )
+  );
+}
 
 // export const fetchPaymentByOrderId = (orderId: string) =>
 //   apiFetch<any>(`/api/payment/order/${orderId}`);
@@ -500,7 +573,9 @@ const getEvidenceDescription = (type: UploadPhotoPayload["type"]) =>
 
 const createEvidenceFileName = (rawName?: string) => {
   const resolved = rawName || `photo_${Date.now()}`;
-  return /\.(jpe?g|png|gif|webp)$/i.test(resolved) ? resolved : `${resolved}.jpg`;
+  return /\.(jpe?g|png|gif|webp)$/i.test(resolved)
+    ? resolved
+    : `${resolved}.jpg`;
 };
 
 const uploadEvidencePhoto = async (
@@ -578,8 +653,12 @@ const uploadEvidencePhoto = async (
     }
   }
 
-  throw lastError ||
-    new Error(`Khong the tai anh len qua /api/ServiceEvidences cho task ${payload.taskId}`);
+  throw (
+    lastError ||
+    new Error(
+      `Khong the tai anh len qua /api/ServiceEvidences cho task ${payload.taskId}`,
+    )
+  );
 };
 
 export const uploadTaskPhoto = async (payload: UploadPhotoPayload) => {
@@ -620,7 +699,9 @@ export const getRatingsByStaffId = (
 // [API: DELETE /tasks/:taskId/photos/:photoId]
 
 export const deleteTaskPhoto = (taskId: string, photoId: string) =>
-  apiFetch<Task>(`/api/ServiceTasks/${taskId}/photo/${photoId}`, { method: "DELETE" });
+  apiFetch<Task>(`/api/ServiceTasks/${taskId}/photo/${photoId}`, {
+    method: "DELETE",
+  });
 
 // CHECK-IN / CHECK-OUT API
 
@@ -651,27 +732,53 @@ export const taskCheckOut = (
 
 // NOTIFICATIONS API
 
-//  [API: GET /notifications]
+// [API: GET /api/Notifications]
 
-export const fetchNotifications = (page = 1, pageSize = 20) =>
-  apiFetch<PaginatedResponse<Notification>>(
-    `/notifications?page=${page}&pageSize=${pageSize}`,
+export const fetchNotifications = (pageNumber = 1, pageSize = 20) => {
+  const query = new URLSearchParams();
+  query.append("pageNumber", String(pageNumber));
+  query.append("pageSize", String(pageSize));
+  return apiFetch<BackendNotificationsPage>(
+    `/api/Notifications?${query.toString()}`,
   );
+};
 
-//  [API: PATCH /notifications/:notificationId/read]
+// [API: PATCH /api/Notifications/:notificationId/read]
 
 export const markNotificationRead = (notificationId: string) =>
-  apiFetch<void>(`/notifications/${notificationId}/read`, { method: "PATCH" });
+  apiFetch<void>(`/api/Notifications/${notificationId}/read`, {
+    method: "PATCH",
+  });
 
-//  [API: PATCH /notifications/read-all]
+// [API: PATCH /api/Notifications/read-all]
 
 export const markAllNotificationsRead = () =>
-  apiFetch<void>("/notifications/read-all", { method: "PATCH" });
+  apiFetch<void>("/api/Notifications/read-all", { method: "PATCH" });
 
-//  [API: GET /notifications/unread-count]
+// [API: GET /api/Notifications/unread-count]
 
 export const fetchUnreadCount = () =>
-  apiFetch<{ count: number }>("/notifications/unread-count");
+  apiFetch<{ count: number }>("/api/Notifications/unread-count");
+
+// AUDIT LOGS API
+
+export interface AuditLogListParams {
+  userId: string;
+  createdAt?: string; // ISO datetime
+  pageNumber?: number;
+  pageSize?: number;
+}
+
+// [API: GET /api/AuditLogs]
+export const fetchAuditLogs = (params: AuditLogListParams) => {
+  const query = new URLSearchParams();
+  query.append("userId", params.userId);
+  if (params.createdAt) query.append("createdAt", params.createdAt);
+  query.append("pageNumber", String(params.pageNumber ?? 1));
+  query.append("pageSize", String(params.pageSize ?? 10));
+
+  return apiFetch<any>(`/api/AuditLogs?${query.toString()}`);
+};
 
 // PUSH NOTIFICATION REGISTRATION
 
@@ -695,47 +802,6 @@ export const fetchSchedule = (startDate: string, endDate: string) =>
 
 // TRADE-IN ORDER API
 
-//  [API: GET /api/TradeInOrders/waiting-orders]
-
-export const fetchTradeInWaitingOrders = (params: TradeInOrderListParams = {}) => {
-  const query = new URLSearchParams();
-  const pageNumber = params.page ?? 1;
-  const pageSize = params.pageSize ?? 20;
-
-  query.append("pageNumber", String(pageNumber));
-  query.append("pageSize", String(pageSize));
-  if (params.status && params.status !== "all")
-    query.append("status", params.status);
-
-  const queryString = query.toString();
-
-  return apiFetch<PaginatedResponse<TradeInOrder>>(
-    queryString
-      ? `/api/TradeInOrders/waiting-orders?${queryString}`
-      : "/api/TradeInOrders/waiting-orders",
-  );
-};
-
-//  [API: GET /api/TradeInOrders/AdminSearchTradeInOrder]
-
-export const searchTradeInOrders = (params: TradeInOrderSearchParams = {}) => {
-  const query = new URLSearchParams();
-
-  if (params.status) query.append("status", params.status);
-  if (params.orderCode) query.append("orderCode", params.orderCode);
-  if (params.customerPhone) query.append("customerPhone", params.customerPhone);
-  if (params.pageNumber) query.append("pageNumber", String(params.pageNumber));
-  if (params.pageSize) query.append("pageSize", String(params.pageSize));
-
-  const queryString = query.toString();
-
-  return apiFetch<PaginatedResponse<TradeInOrder>>(
-    queryString
-      ? `/api/TradeInOrders/AdminSearchTradeInOrder?${queryString}`
-      : "/api/TradeInOrders/AdminSearchTradeInOrder",
-  );
-};
-
 //  [API: GET /api/TradeInOrders/:tradeInOrderId]
 
 export const fetchTradeInOrderById = (tradeInOrderId: string) =>
@@ -743,7 +809,10 @@ export const fetchTradeInOrderById = (tradeInOrderId: string) =>
 
 //  [API: PATCH /api/TradeInOrders/:tradeInOrderId/processing]
 
-export const updateTradeInOrderProcessing = (tradeInOrderId: string, notes?: string) =>
+export const updateTradeInOrderProcessing = (
+  tradeInOrderId: string,
+  notes?: string,
+) =>
   apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}/processing`, {
     method: "PATCH",
     body: JSON.stringify(notes ? { notes } : {}),
@@ -751,7 +820,10 @@ export const updateTradeInOrderProcessing = (tradeInOrderId: string, notes?: str
 
 //  [API: PATCH /api/TradeInOrders/:tradeInOrderId/delivered]
 
-export const updateTradeInOrderDelivered = (tradeInOrderId: string, notes?: string) =>
+export const updateTradeInOrderDelivered = (
+  tradeInOrderId: string,
+  notes?: string,
+) =>
   apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}/delivered`, {
     method: "PATCH",
     body: JSON.stringify(notes ? { notes } : {}),
@@ -759,7 +831,10 @@ export const updateTradeInOrderDelivered = (tradeInOrderId: string, notes?: stri
 
 //  [API: PATCH /api/TradeInOrders/:tradeInOrderId/completed]
 
-export const updateTradeInOrderCompleted = (tradeInOrderId: string, notes?: string) =>
+export const updateTradeInOrderCompleted = (
+  tradeInOrderId: string,
+  notes?: string,
+) =>
   apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}/completed`, {
     method: "PATCH",
     body: JSON.stringify(notes ? { notes } : {}),
@@ -781,7 +856,7 @@ export const uploadTradeInOrderImage = (
   imageType?: string,
 ) => {
   const formData = new FormData();
-  
+
   formData.append("file", {
     uri: imageUri,
     type: "image/jpeg",
@@ -797,3 +872,77 @@ export const uploadTradeInOrderImage = (
     formData,
   );
 };
+
+//  SHIPPING TASKS for TRADE-IN
+
+//  [API: PUT /api/ShippingTasks/:taskId/delivering-for-tradein]
+
+export const updateShippingTaskDeliveringForTradeIn = (
+  taskId: string,
+  payload: ShippingTaskStatusPayload = {},
+) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/delivering-for-tradein`, {
+    method: "PUT",
+    body: JSON.stringify({ evidenceUrls: payload.evidenceUrls ?? [] }),
+  });
+
+//  [API: PUT /api/ShippingTasks/:taskId/delivered-for-tradein]
+
+export const updateShippingTaskDeliveredForTradeIn = (
+  taskId: string,
+  payload: ShippingTaskStatusPayload = {},
+) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/delivered-for-tradein`, {
+    method: "PUT",
+    body: JSON.stringify({ evidenceUrls: payload.evidenceUrls ?? [] }),
+  });
+
+//  [API: PUT /api/ShippingTasks/:taskId/returned-for-tradein]
+
+export const updateShippingTaskReturnedForTradeIn = (
+  taskId: string,
+  payload: ShippingTaskStatusPayload,
+) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/returned-for-tradein`, {
+    method: "PUT",
+    body: JSON.stringify({
+      reason: payload.reason ?? "",
+      evidenceUrls: payload.evidenceUrls ?? [],
+    }),
+  });
+
+//  [API: PUT /api/ShippingTasks/:taskId/forced-cancelled-TradeIn]
+
+export const updateShippingTaskForceCancelledForTradeIn = (
+  taskId: string,
+  payload: ShippingTaskStatusPayload,
+) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/forced-cancelled-TradeIn`, {
+    method: "PUT",
+    body: JSON.stringify({
+      reason: payload.reason ?? "",
+      evidenceUrls: payload.evidenceUrls ?? [],
+    }),
+  });
+
+//  [API: POST /api/ShippingTasks/:taskId/process-returned-for-tradein]
+
+export const processReturnedForTradeIn = (
+  taskId: string,
+  payload?: Record<string, any>,
+) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/process-returned-for-tradein`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+
+//  [API: POST /api/ShippingTasks/:taskId/process-exchange-for-tradein]
+
+export const processExchangeForTradeIn = (
+  taskId: string,
+  payload?: Record<string, any>,
+) =>
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/process-exchange-for-tradein`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
