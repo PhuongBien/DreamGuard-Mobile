@@ -8,10 +8,13 @@ import {
   updateShippingTaskDelivered,
   updateShippingTaskDelivering,
   updateShippingTaskReturned,
+  updateShippingTaskShippingDate,
   updateShippingTaskDeliveringForTradeIn,
   updateShippingTaskDeliveredForTradeIn,
   updateShippingTaskReturnedForTradeIn,
   updateShippingTaskForceCancelledForTradeIn,
+  processReturnedForTradeIn,
+  processExchangeForTradeIn,
 } from "../utils/api";
 import { uploadImageToCloudinary } from "../utils/cloudinary";
 
@@ -720,6 +723,48 @@ export const DeliveryTaskService = {
       reason,
       evidenceUrls,
     });
+    return (
+      (await hydrateTaskWithOrder(parseTask(response.data))) ??
+      (await refreshDeliveryTask(taskId))
+    );
+  },
+
+  async updateShippingDate(
+    taskId: string,
+    payload: { shippingDate: string; note?: string },
+  ): Promise<Task> {
+    const response = await updateShippingTaskShippingDate(taskId, payload);
+    return (
+      (await hydrateTaskWithOrder(parseTask(response.data))) ??
+      (await refreshDeliveryTask(taskId))
+    );
+  },
+
+  async processReturnedForTradeIn(
+    taskId: string,
+    payload: {
+      damageNote?: string;
+      evidenceUrls?: string[];
+      productVariantId?: string;
+    },
+  ): Promise<Task> {
+    const response = await processReturnedForTradeIn(taskId, payload ?? {});
+    return (
+      (await hydrateTaskWithOrder(parseTask(response.data))) ??
+      (await refreshDeliveryTask(taskId))
+    );
+  },
+
+  async processExchangeForTradeIn(
+    taskId: string,
+    payload: {
+      newStaffId?: string;
+      exchangeNote?: string;
+      evidenceUrls?: string[];
+      productVariantId?: string;
+    },
+  ): Promise<Task> {
+    const response = await processExchangeForTradeIn(taskId, payload ?? {});
     return (
       (await hydrateTaskWithOrder(parseTask(response.data))) ??
       (await refreshDeliveryTask(taskId))

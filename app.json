@@ -1,12 +1,17 @@
 {
   "expo": {
-    "name": "dreamguard-mobile-new",
+    "name": "DreamGuard",
     "slug": "dreamguard-mobile-new",
+    "extra": {
+      "eas": {
+        "projectId": "54a8b218-5bf7-40c5-a05d-37f84f808ad0"
+      }
+    },
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -27,7 +32,8 @@
         "WRITE_EXTERNAL_STORAGE"
       ],
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.phuongbtt.dreamguardmobilenew"
     },
     "web": {
       "favicon": "./assets/favicon.png"

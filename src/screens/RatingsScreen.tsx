@@ -1,6 +1,12 @@
 // KBS Staff App — Ratings Screen (Staff view of customer ratings)
 
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import React, {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -55,7 +61,9 @@ const toNumber = (value: unknown): number => {
 };
 
 const toKey = (value?: string | null): string =>
-  String(value || "").trim().toLowerCase();
+  String(value || "")
+    .trim()
+    .toLowerCase();
 
 const mergeTaskNamesIntoMap = (
   map: Map<string, string>,
@@ -111,7 +119,8 @@ const normalizeRating = (raw: unknown): Rating | null => {
       "",
     score,
     comment:
-      pickFirstString(raw.comment, raw.feedback, raw.note, raw.description) ?? null,
+      pickFirstString(raw.comment, raw.feedback, raw.note, raw.description) ??
+      null,
     customerName:
       pickFirstString(
         raw.customerName,
@@ -136,8 +145,7 @@ const normalizeRating = (raw: unknown): Rating | null => {
         raw.orderId,
         serviceOrder?.id,
         serviceOrder?.serviceOrderId,
-      ) ??
-      null,
+      ) ?? null,
     serviceOrderCode:
       pickFirstString(
         raw.serviceOrderCode,
@@ -147,7 +155,8 @@ const normalizeRating = (raw: unknown): Rating | null => {
         serviceOrder?.orderCode,
       ) ?? null,
     staffId: pickFirstString(raw.staffId, raw.staff?.id) ?? null,
-    createdAt: pickFirstString(raw.createdAt, raw.createdDate, raw.ratingDate) ?? null,
+    createdAt:
+      pickFirstString(raw.createdAt, raw.createdDate, raw.ratingDate) ?? null,
     updatedAt: pickFirstString(raw.updatedAt, raw.modifiedAt) ?? null,
   };
 };
@@ -246,9 +255,7 @@ function RatingCard({ item }: { item: Rating }) {
           </View>
         </View>
         {item.createdAt ? (
-          <Text style={styles.reviewDate}>
-            {formatDate(item.createdAt)}
-          </Text>
+          <Text style={styles.reviewDate}>{formatDate(item.createdAt)}</Text>
         ) : null}
       </View>
     </View>
@@ -282,8 +289,8 @@ function RatingsSummary({ ratings }: { ratings: Rating[] }) {
     <View style={styles.summaryWrapper}>
       <View style={styles.heroCard}>
         <View style={styles.card}>
-        <Text style={styles.heroTitle}>{avg.toFixed(1)}</Text>
-        <Text style={styles.heroSubTitle}>/ 5.0</Text>
+          <Text style={styles.heroTitle}>{avg.toFixed(1)}</Text>
+          <Text style={styles.heroSubTitle}>/ 5.0</Text>
         </View>
         <View style={styles.heroStars}>
           {[1, 2, 3, 4, 5].map((i) => (
@@ -295,7 +302,9 @@ function RatingsSummary({ ratings }: { ratings: Rating[] }) {
             />
           ))}
         </View>
-        <Text style={styles.heroText}>Based on {total} reviews from customers</Text>
+        <Text style={styles.heroText}>
+          Based on {total} reviews from customers
+        </Text>
       </View>
 
       <View style={styles.summaryStatsRow}>
@@ -354,7 +363,8 @@ function RatingsSummary({ ratings }: { ratings: Rating[] }) {
 // ── Main Screen ───────────────────────────────────────────────
 
 export default function RatingsScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
   const { user } = useAuth();
   const { tasks } = useTask();
 
@@ -467,14 +477,14 @@ export default function RatingsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor={Colors.primary900}
-      />
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backButton}
+        >
           <Ionicons name="arrow-back" size={22} color={Colors.white} />
         </TouchableOpacity>
         <Ionicons name="star" size={22} color={Colors.warning} />
@@ -507,17 +517,11 @@ export default function RatingsScreen() {
             />
           }
           ListHeaderComponent={
-            ratings.length > 0 ? (
-              <RatingsSummary ratings={ratings} />
-            ) : null
+            ratings.length > 0 ? <RatingsSummary ratings={ratings} /> : null
           }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Ionicons
-                name="star-outline"
-                size={56}
-                color={Colors.gray300}
-              />
+              <Ionicons name="star-outline" size={56} color={Colors.gray300} />
               <Text style={styles.emptyTitle}>No Ratings</Text>
               <Text style={styles.emptySubtitle}>
                 Customers haven't submitted any ratings for you yet.
@@ -570,7 +574,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 12,
     padding: Spacing["2xl"],
-    
   },
 
   loadingText: {
@@ -600,9 +603,8 @@ const styles = StyleSheet.create({
     // borderWidth: 1,
     padding: Spacing.lg,
     paddingBottom: Spacing["xl"],
-    boxShadow: `0px 4px 12px ${Colors.primary400}`,
+    boxShadow: `0px 2px 12px ${Colors.primary800}`,
     textAlign: "center",
-
   },
 
   heroTitle: {

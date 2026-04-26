@@ -12,6 +12,7 @@ import { Task, TaskStatus, TaskNote, TaskPhoto } from "../types";
 import { TaskService } from "../services/task.service";
 import { DeliveryTaskService } from "../services/delivery-task.service";
 import { useAuth } from "./AuthContext";
+import { uploadImageToCloudinary } from "../utils/cloudinary";
 
 const isGuid = (value?: string) =>
   !!value &&
@@ -79,9 +80,19 @@ export interface TaskContextType {
   ) => Promise<string>;
 
   checkIn: (taskId: string) => Promise<void>;
+  checkInWithEvidence: (taskId: string, evidenceUrls: string[]) => Promise<void>;
   checkOut: (taskId: string, note?: string) => Promise<void>;
+  checkOutWithEvidence: (
+    taskId: string,
+    evidenceUrls: string[],
+    note?: string,
+  ) => Promise<void>;
   startProcessing: (taskId: string) => Promise<void>;
   completeTask: (taskId: string) => Promise<void>;
+  forcedCancel: (
+    taskId: string,
+    payload?: { staffNote?: string },
+  ) => Promise<void>;
   startDelivery: (taskId: string, evidenceUrls?: string[]) => Promise<void>;
   markArrived: (taskId: string) => Promise<void>;
   markDelivered: (taskId: string, evidenceUrls: string[]) => Promise<void>;
@@ -527,44 +538,40 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
       return uploadedUrl;
     }
 
-    const photo: TaskPhoto & {
-      fileName?: string;
-      mimeType?: string;
-    } = {
-      ...photoData,
-      id: `photo_${Date.now()}`,
-      uploadedAt: new Date().toISOString(),
-    };
-
-    const updated = await TaskService.addPhoto(taskId, photo);
-
-    // Some backend responses are eventually consistent for image URL arrays.
-    // Keep UX responsive by showing the uploaded image immediately.
-    const hasUploadedPhoto = (updated.photos || []).some(
-      (item) => item.url === photo.url,
-    );
-
-    if (hasUploadedPhoto) {
-      updateLocalTask(updated);
-      return photo.url;
+    // Service tasks: backend may block evidence upload until CheckedOut.
+    // Upload to Cloudinary instead; those URLs are used as evidenceUrls
+    // for updateCheckedInStatus / updateCheckedOutStatus.
+    const existing = tasksRef.current.find((task) => task.id === taskId);
+    if (!existing) {
+      throw new Error("Task not found");
     }
 
-    const merged: Task = {
-      ...updated,
-      photos: [
-        ...(updated.photos || []),
-        {
-          id: photo.id,
-          url: photo.url,
-          type: photo.type,
-          uploadedAt: photo.uploadedAt,
-          uploadedBy: photo.uploadedBy,
-        },
-      ],
+    const uploadedUrl = await uploadImageToCloudinary(photoData.url, {
+      fileName:
+        photoData.fileName ||
+        `${photoData.type || "photo"}_${existing.taskCode || taskId}_${Date.now()}`,
+      mimeType: photoData.mimeType,
+    });
+
+    const uploadedPhoto: TaskPhoto = {
+      id: `photo_${Date.now()}`,
+      url: uploadedUrl,
+      type: photoData.type,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: photoData.uploadedBy,
+      captureStage: photoData.captureStage,
     };
 
-    updateLocalTask(merged);
-    return photo.url;
+    updateLocalTask({
+      ...existing,
+      photos: mergePhotos([uploadedPhoto, ...(existing.photos || [])], existing.photos || []),
+      relatedImageUrls: mergeImageUrls(
+        [uploadedUrl, ...(existing.relatedImageUrls || [])],
+        existing.relatedImageUrls || [],
+      ),
+    });
+
+    return uploadedUrl;
   };
 
   const checkIn = async (taskId: string) => {
@@ -576,12 +583,50 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
     updateLocalTask(updated);
   };
 
+  const checkInWithEvidence = async (taskId: string, evidenceUrls: string[]) => {
+    if (isDeliveryStaff) {
+      throw new Error("Check-in is not used for delivery tasks");
+    }
+
+    const updated = await TaskService.checkInWithEvidence(taskId, evidenceUrls);
+    updateLocalTask(updated);
+  };
+
   const checkOut = async (taskId: string, note?: string) => {
     if (isDeliveryStaff) {
       throw new Error("Check-out is not used for delivery tasks");
     }
 
     const updated = await TaskService.checkOut(taskId, note);
+    updateLocalTask(updated);
+  };
+
+  const checkOutWithEvidence = async (
+    taskId: string,
+    evidenceUrls: string[],
+    note?: string,
+  ) => {
+    if (isDeliveryStaff) {
+      throw new Error("Check-out is not used for delivery tasks");
+    }
+
+    const updated = await TaskService.checkOutWithEvidence(
+      taskId,
+      evidenceUrls,
+      note,
+    );
+    updateLocalTask(updated);
+  };
+
+  const forcedCancel = async (
+    taskId: string,
+    payload?: { staffNote?: string },
+  ) => {
+    if (isDeliveryStaff) {
+      throw new Error("Forced cancel is not used for delivery tasks");
+    }
+
+    const updated = await TaskService.forcedCancel(taskId, payload);
     updateLocalTask(updated);
   };
 
@@ -698,9 +743,12 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
         addTaskNote,
         addTaskPhoto,
         checkIn,
+        checkInWithEvidence,
         checkOut,
+        checkOutWithEvidence,
         startProcessing,
         completeTask,
+        forcedCancel,
         startDelivery,
         markArrived,
         markDelivered,
@@ -721,22 +769,25 @@ export const useTask = () => {
 };
 
 function mergePhotos(localPhotos: TaskPhoto[], remotePhotos: TaskPhoto[]) {
+  const normalizeUrlKey = (value?: string) => String(value ?? "").trim();
   const byUrl = new Map<string, TaskPhoto>();
 
   for (const photo of remotePhotos) {
-    if (!photo.url) continue;
-    byUrl.set(photo.url, photo);
+    const key = normalizeUrlKey(photo.url);
+    if (!key) continue;
+    byUrl.set(key, { ...photo, url: key });
   }
 
   for (const photo of localPhotos) {
-    if (!photo.url) continue;
-    const existing = byUrl.get(photo.url);
+    const key = normalizeUrlKey(photo.url);
+    if (!key) continue;
+    const existing = byUrl.get(key);
     if (!existing) {
-      byUrl.set(photo.url, photo);
+      byUrl.set(key, { ...photo, url: key });
       continue;
     }
 
-    byUrl.set(photo.url, {
+    byUrl.set(key, {
       ...existing,
       captureStage: existing.captureStage || photo.captureStage,
       uploadedBy: existing.uploadedBy || photo.uploadedBy,
@@ -748,5 +799,12 @@ function mergePhotos(localPhotos: TaskPhoto[], remotePhotos: TaskPhoto[]) {
 }
 
 function mergeImageUrls(localUrls: string[], remoteUrls: string[]) {
-  return Array.from(new Set([...remoteUrls, ...localUrls].filter(Boolean)));
+  const normalizeUrlKey = (value?: string) => String(value ?? "").trim();
+  return Array.from(
+    new Set(
+      [...remoteUrls, ...localUrls]
+        .map((url) => normalizeUrlKey(url))
+        .filter(Boolean),
+    ),
+  );
 }

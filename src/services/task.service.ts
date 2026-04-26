@@ -14,8 +14,10 @@ import {
   fetchServiceTaskEvidences as apiFetchServiceTaskEvidences,
   updateTaskStatus as apiUpdateTaskStatus,
   updateTaskCheckedInStatus,
+  updateTaskCheckedInStatusWithEvidence,
   updateTaskProcessingStatus,
   updateTaskCheckedOutStatus,
+  updateTaskForcedCancelledStatus,
   addTaskNote as apiAddTaskNote,
   uploadTaskPhoto as apiUploadTaskPhoto,
 } from "../utils/api";
@@ -922,6 +924,25 @@ export const TaskService = {
     return refreshed;
   },
 
+  async checkInWithEvidence(taskId: string, evidenceUrls: string[]): Promise<Task> {
+    const current = await this.getTaskById(taskId);
+    if (!current) throw new Error("Task not found before check-in");
+
+    if (
+      current.status === "checked_in" ||
+      current.status === "in_progress" ||
+      current.status === "checked_out" ||
+      current.status === "completed"
+    ) {
+      return current;
+    }
+
+    await updateTaskCheckedInStatusWithEvidence(taskId, evidenceUrls ?? []);
+    const refreshed = await this.getTaskById(taskId);
+    if (!refreshed) throw new Error("Task not found after check-in");
+    return refreshed;
+  },
+
   // ================= START PROCESSING =================
 
   async startProcessing(taskId: string): Promise<Task> {
@@ -981,9 +1002,61 @@ export const TaskService = {
     }
 
     // Processing → CheckedOut
-    await updateTaskCheckedOutStatus(taskId, note);
+    await updateTaskCheckedOutStatus(taskId, { staffNote: note });
     const refreshed = await this.getTaskById(taskId);
     if (!refreshed) throw new Error("Task not found after check-out");
+    return refreshed;
+  },
+
+  async checkOutWithEvidence(
+    taskId: string,
+    evidenceUrls: string[],
+    note?: string,
+  ): Promise<Task> {
+    const current = await this.getTaskById(taskId);
+    if (!current) throw new Error("Task not found before check-out");
+
+    const hasCheckedIn = !!current.checkInOut?.checkIn;
+    const hasCheckedOut = !!current.checkInOut?.checkOut;
+    const effectiveStatus: TaskStatus =
+      current.status === "pending" && hasCheckedIn
+        ? "checked_in"
+        : current.status === "in_progress" && hasCheckedOut
+          ? "checked_out"
+          : current.status;
+
+    if (effectiveStatus === "checked_out" || effectiveStatus === "completed") {
+      return current;
+    }
+
+    if (effectiveStatus === "checked_in") {
+      await updateTaskProcessingStatus(taskId);
+    }
+
+    await updateTaskCheckedOutStatus(taskId, {
+      evidenceUrls: evidenceUrls ?? [],
+      ...(note ? { staffNote: note } : {}),
+    });
+
+    const refreshed = await this.getTaskById(taskId);
+    if (!refreshed) throw new Error("Task not found after check-out");
+    return refreshed;
+  },
+
+  async forcedCancel(
+    taskId: string,
+    payload?: { staffNote?: string },
+  ): Promise<Task> {
+    const current = await this.getTaskById(taskId);
+    if (!current) throw new Error("Task not found before forced cancel");
+
+    if (current.status === "cancelled" || current.status === "completed") {
+      return current;
+    }
+
+    await updateTaskForcedCancelledStatus(taskId, payload);
+    const refreshed = await this.getTaskById(taskId);
+    if (!refreshed) throw new Error("Task not found after forced cancel");
     return refreshed;
   },
 

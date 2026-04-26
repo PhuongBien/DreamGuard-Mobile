@@ -8,6 +8,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -142,7 +143,14 @@ function formatDateTimeDisplay(value?: string) {
   return `${formatDate(parsed.toISOString())} • ${formatTime(parsed.toISOString())}`;
 }
 
-/** Backend Processing / InProgress — required before delivering-for-tradein */
+function isPastIsoDateTime(value?: string | null): boolean {
+  if (!value) return false;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.getTime() < Date.now();
+}
+
+/** Backend Processing / InProgress — required before delivering-for-tradeIn */
 function isTradeInOrderInProcessing(status?: string): boolean {
   const s = (status ?? "").trim().toLowerCase().replace(/\s+/g, "");
   return s === "processing" || s === "inprogress";
@@ -160,6 +168,26 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
   const [evidenceImageUri, setEvidenceImageUri] = useState<string | null>(null);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [currentImage, setCurrentImage] = useState<string | null>(null);
+
+  // Post-delivery unhappy-case processing (after RETURNED / FORCED_CANCELLED)
+  const [processModalVisible, setProcessModalVisible] = useState(false);
+  const [processMode, setProcessMode] = useState<"returned" | "exchange">(
+    "returned",
+  );
+  const [processReasonNote, setProcessReasonNote] = useState<string>("");
+  const [processNewStaffId, setProcessNewStaffId] = useState<string>("");
+  const [processProductVariantId, setProcessProductVariantId] =
+    useState<string>("");
+  const [processEvidenceUris, setProcessEvidenceUris] = useState<string[]>([]);
+
+  // Shipping schedule (ShippingTask.shippingDate) — required before Processing on BE
+  const [scheduleModalVisible, setScheduleModalVisible] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState<string>(""); // YYYY-MM-DD
+  const [scheduleTime, setScheduleTime] = useState<string>(""); // HH:mm
+  const [scheduleNote, setScheduleNote] = useState<string>("");
+  const [scheduleShippingDateIso, setScheduleShippingDateIso] = useState<string | null>(
+    null,
+  );
 
   const activeTaskId = shippingTask?.id ?? routeShippingTaskId;
 
@@ -339,10 +367,25 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
 
   const handleReceiveOrder = async () => {
     if (!order?.tradeInOrderId) return;
+    if (isPastIsoDateTime(shippingTask?.appointmentDateRaw)) {
+      Alert.alert(
+        "Shipping date invalid",
+        "Shipping date cannot be in the past. Please update ShippingDate for this shipping task to today/future, then try again.",
+      );
+      return;
+    }
+    if (!scheduleShippingDateIso) {
+      Alert.alert(
+        "Missing shipping date",
+        "Please set ShippingDate first, then click Receive Order.",
+      );
+      return;
+    }
     try {
       setActionLoading(true);
       const updated = await TradeInOrderService.updateProcessing(
         order.tradeInOrderId,
+        { shippingDate: scheduleShippingDateIso },
       );
       if (!updated) {
         throw new Error(
@@ -362,6 +405,74 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
     }
   };
 
+  const openScheduleModal = useCallback(() => {
+    const existing =
+      shippingTask?.appointmentDateRaw ??
+      (shippingTask?.dueDate
+        ? `${shippingTask.dueDate}${shippingTask.dueTime ? `T${shippingTask.dueTime}:00` : ""}`
+        : "");
+
+    const parsed = existing ? new Date(existing) : null;
+    const fallback = new Date();
+    const base = parsed && !Number.isNaN(parsed.getTime()) ? parsed : fallback;
+
+    const yyyy = base.getFullYear();
+    const mm = String(base.getMonth() + 1).padStart(2, "0");
+    const dd = String(base.getDate()).padStart(2, "0");
+    const hh = String(base.getHours()).padStart(2, "0");
+    const min = String(base.getMinutes()).padStart(2, "0");
+
+    setScheduleDate(`${yyyy}-${mm}-${dd}`);
+    setScheduleTime(`${hh}:${min}`);
+    setScheduleNote("");
+    setScheduleModalVisible(true);
+  }, [shippingTask?.appointmentDateRaw, shippingTask?.dueDate, shippingTask?.dueTime]);
+
+  const handleSubmitSchedule = useCallback(async () => {
+    const date = scheduleDate.trim();
+    const time = scheduleTime.trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      Alert.alert("Invalid date", "Use format YYYY-MM-DD");
+      return;
+    }
+    if (!/^\d{2}:\d{2}$/.test(time)) {
+      Alert.alert("Invalid time", "Use format HH:mm");
+      return;
+    }
+
+    const iso = `${date}T${time}:00`;
+    const parsed = new Date(iso);
+    if (Number.isNaN(parsed.getTime())) {
+      Alert.alert("Invalid datetime", "Please check date/time values.");
+      return;
+    }
+    if (parsed.getTime() < Date.now()) {
+      Alert.alert(
+        "Shipping date invalid",
+        "Shipping date cannot be in the past.",
+      );
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      // Backend expects shippingDate on TradeInOrders/:id/processing payload.
+      // Store it locally and let "Receive Order" submit it.
+      setScheduleShippingDateIso(parsed.toISOString());
+      setScheduleModalVisible(false);
+      Alert.alert("Saved", "ShippingDate has been set. Now click Receive Order.");
+    } catch (err: any) {
+      Alert.alert("Error", err?.message ?? "Failed to set shipping date");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [
+    scheduleDate,
+    scheduleNote,
+    scheduleTime,
+  ]);
+
   const handleCaptureEvidence = useCallback(async () => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -379,6 +490,29 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
       });
       if (!result.canceled && result.assets?.length > 0) {
         setEvidenceImageUri(result.assets[0].uri);
+      }
+    } catch (err: any) {
+      Alert.alert("Camera error", err?.message);
+    }
+  }, []);
+
+  const handleCaptureProcessEvidence = useCallback(async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Missing camera permission",
+          "Camera permission is required to capture evidence.",
+        );
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets?.length > 0) {
+        setProcessEvidenceUris((prev) => [...prev, result.assets[0].uri]);
       }
     } catch (err: any) {
       Alert.alert("Camera error", err?.message);
@@ -427,6 +561,82 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
       setActionLoading(false);
     }
   };
+
+  const openProcessModal = useCallback(
+    (mode: "returned" | "exchange") => {
+      setProcessMode(mode);
+      setProcessReasonNote("");
+      setProcessNewStaffId("");
+      setProcessProductVariantId("");
+      setProcessEvidenceUris([]);
+      setProcessModalVisible(true);
+    },
+    [],
+  );
+
+  const handleSubmitPostReturnProcess = useCallback(async () => {
+    if (!activeTaskId) return;
+    if (!processProductVariantId.trim()) {
+      Alert.alert("Missing productVariantId", "Please input productVariantId.");
+      return;
+    }
+    if (!processReasonNote.trim()) {
+      Alert.alert("Missing note", "Please input a note for this action.");
+      return;
+    }
+    if (!processEvidenceUris.length) {
+      Alert.alert(
+        "Missing evidence",
+        "Please capture at least one evidence photo.",
+      );
+      return;
+    }
+    if (processMode === "exchange" && !processNewStaffId.trim()) {
+      Alert.alert("Missing newStaffId", "Please input newStaffId.");
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      const evidenceUrls: string[] = [];
+      for (const uri of processEvidenceUris) {
+        const uploaded = await uploadImageToCloudinary(uri);
+        if (uploaded) evidenceUrls.push(uploaded);
+      }
+      if (!evidenceUrls.length) throw new Error("Upload evidence failed");
+
+      if (processMode === "returned") {
+        await DeliveryTaskService.processReturnedForTradeIn(activeTaskId, {
+          damageNote: processReasonNote.trim(),
+          evidenceUrls,
+          productVariantId: processProductVariantId.trim(),
+        });
+      } else {
+        await DeliveryTaskService.processExchangeForTradeIn(activeTaskId, {
+          newStaffId: processNewStaffId.trim(),
+          exchangeNote: processReasonNote.trim(),
+          evidenceUrls,
+          productVariantId: processProductVariantId.trim(),
+        });
+      }
+
+      setProcessModalVisible(false);
+      await loadAll();
+      Alert.alert("Success", "Submitted successfully.");
+    } catch (err: any) {
+      Alert.alert("Error", err?.message ?? "Submit failed");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [
+    activeTaskId,
+    processEvidenceUris,
+    processMode,
+    processNewStaffId,
+    processProductVariantId,
+    processReasonNote,
+    loadAll,
+  ]);
 
   if (loading) {
     return (
@@ -812,6 +1022,36 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
           </View>
         ) : null}
 
+        {activeTaskId ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>SHIPPING SCHEDULE</Text>
+            <Text style={styles.descriptionText}>
+              ShippingDate:{" "}
+              {shippingTask?.appointmentDateRaw
+                ? formatDateTimeDisplay(shippingTask.appointmentDateRaw)
+                : scheduleShippingDateIso
+                  ? formatDateTimeDisplay(scheduleShippingDateIso)
+                  : "Not set"}
+            </Text>
+            <TouchableOpacity
+              style={[
+                styles.photoActionButton,
+                actionLoading && styles.bottomActionButtonDisabled,
+              ]}
+              activeOpacity={0.85}
+              disabled={actionLoading}
+              onPress={openScheduleModal}
+            >
+              <Ionicons
+                name="calendar-outline"
+                size={16}
+                color={Colors.primary500}
+              />
+              <Text style={styles.uploadLinkText}>Set ShippingDate</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         {timelineEntries.length > 0 ? (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>DELIVERY TIMELINE</Text>
@@ -844,6 +1084,45 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
             </Text>
           </View>
         )}
+
+        {activeTaskId && (taskStatus === "returned" || taskStatus === "cancelled") ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>POST-RETURN PROCESSING</Text>
+            <Text style={styles.descriptionText}>
+              Use these actions after the task is returned / forced-cancelled to
+              process the trade-in flow (returned/exchange).
+            </Text>
+            <View style={styles.dualActionWrap}>
+              <TouchableOpacity
+                style={[styles.secondaryActionButton, styles.dualActionButton]}
+                activeOpacity={0.85}
+                disabled={actionLoading}
+                onPress={() => openProcessModal("returned")}
+              >
+                <Ionicons
+                  name="return-down-back-outline"
+                  size={16}
+                  color={Colors.error}
+                />
+                <Text style={styles.secondaryActionText}>Process returned</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.bottomActionButton, styles.dualActionButton]}
+                activeOpacity={0.85}
+                disabled={actionLoading}
+                onPress={() => openProcessModal("exchange")}
+              >
+                <Ionicons
+                  name="swap-horizontal-outline"
+                  size={16}
+                  color={Colors.white}
+                />
+                <Text style={styles.bottomActionText}>Process exchange</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
 
         {deliveryImageUrls.length > 0 ? (
           <View style={styles.card}>
@@ -1109,28 +1388,56 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
           ) : null}
 
           {taskStatus === "delivering" ? (
-            <TouchableOpacity
-              style={[
-                styles.bottomActionButton,
-                actionLoading && styles.bottomActionButtonDisabled,
-              ]}
-              onPress={handleMarkArrived}
-              disabled={actionLoading}
-              activeOpacity={0.85}
-            >
-              {actionLoading ? (
-                <ActivityIndicator color={Colors.white} />
-              ) : (
-                <>
-                  <Ionicons
-                    name="location-outline"
-                    size={16}
-                    color={Colors.white}
-                  />
-                  <Text style={styles.bottomActionText}>Mark as arrived</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            <View style={styles.dualActionWrap}>
+              <TouchableOpacity
+                style={[
+                  styles.secondaryActionButton,
+                  styles.dualActionButton,
+                  actionLoading && styles.bottomActionButtonDisabled,
+                ]}
+                activeOpacity={0.85}
+                disabled={actionLoading}
+                onPress={() =>
+                  navigation.navigate("DeliveryPhotoCapture", {
+                    shippingTaskId: activeTaskId,
+                    mode: "returned",
+                    tradeInFlow: true,
+                    tradeInOrderId: order.tradeInOrderId,
+                  })
+                }
+              >
+                <Ionicons
+                  name="close-circle-outline"
+                  size={16}
+                  color={Colors.error}
+                />
+                <Text style={styles.secondaryActionText}>Cannot deliver</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.bottomActionButton,
+                  styles.dualActionButton,
+                  actionLoading && styles.bottomActionButtonDisabled,
+                ]}
+                onPress={handleMarkArrived}
+                disabled={actionLoading}
+                activeOpacity={0.85}
+              >
+                {actionLoading ? (
+                  <ActivityIndicator color={Colors.white} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="location-outline"
+                      size={16}
+                      color={Colors.white}
+                    />
+                    <Text style={styles.bottomActionText}>Mark as arrived</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           ) : null}
 
           {taskStatus === "arrived" ? (
@@ -1190,11 +1497,39 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
           ) : null}
 
           {taskStatus === "delivered" ? (
-            <View style={styles.photoReminder}>
-              <Ionicons name="checkmark-circle" size={20} color="#0284C7" />
-              <Text style={styles.photoReminderText}>
-                Task delivered successfully. Evidence was submitted.
-              </Text>
+            <View style={{ gap: 10 }}>
+              <View style={styles.photoReminder}>
+                <Ionicons name="checkmark-circle" size={20} color="#0284C7" />
+                <Text style={styles.photoReminderText}>
+                  Task delivered successfully. Evidence was submitted.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.secondaryActionButton,
+                  actionLoading && styles.bottomActionButtonDisabled,
+                ]}
+                activeOpacity={0.85}
+                disabled={actionLoading}
+                onPress={() =>
+                  navigation.navigate("DeliveryPhotoCapture", {
+                    shippingTaskId: activeTaskId,
+                    mode: "forced_cancelled",
+                    tradeInFlow: true,
+                    tradeInOrderId: order.tradeInOrderId,
+                  })
+                }
+              >
+                <Ionicons
+                  name="warning-outline"
+                  size={16}
+                  color={Colors.error}
+                />
+                <Text style={styles.secondaryActionText}>
+                  Forced cancel (trade-in mismatch)
+                </Text>
+              </TouchableOpacity>
             </View>
           ) : null}
 
@@ -1227,6 +1562,205 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
               resizeMode="contain"
             />
           ) : null}
+        </View>
+      </Modal>
+
+      <Modal visible={processModalVisible} transparent animationType="fade">
+        <View style={styles.modalBackground}>
+          <View style={styles.processModalCard}>
+            <View style={styles.processModalHeader}>
+              <Text style={styles.processModalTitle}>
+                {processMode === "returned"
+                  ? "Process returned trade-in"
+                  : "Process exchange trade-in"}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setProcessModalVisible(false)}
+                disabled={actionLoading}
+              >
+                <Ionicons name="close" size={22} color={Colors.gray600} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.processHint}>
+              Required: productVariantId, note, and evidence photos.
+            </Text>
+
+            {processMode === "exchange" ? (
+              <TextInput
+                value={processNewStaffId}
+                onChangeText={setProcessNewStaffId}
+                editable={!actionLoading}
+                placeholder="newStaffId"
+                placeholderTextColor={Colors.gray400}
+                style={styles.processInput}
+                autoCapitalize="none"
+              />
+            ) : null}
+
+            <TextInput
+              value={processProductVariantId}
+              onChangeText={setProcessProductVariantId}
+              editable={!actionLoading}
+              placeholder="productVariantId"
+              placeholderTextColor={Colors.gray400}
+              style={styles.processInput}
+              autoCapitalize="none"
+            />
+
+            <TextInput
+              value={processReasonNote}
+              onChangeText={setProcessReasonNote}
+              editable={!actionLoading}
+              placeholder={
+                processMode === "returned" ? "damageNote" : "exchangeNote"
+              }
+              placeholderTextColor={Colors.gray400}
+              style={[styles.processInput, styles.processTextArea]}
+              multiline
+            />
+
+            <View style={styles.processEvidenceRow}>
+              <TouchableOpacity
+                style={styles.processEvidenceBtn}
+                activeOpacity={0.85}
+                disabled={actionLoading}
+                onPress={handleCaptureProcessEvidence}
+              >
+                <Ionicons
+                  name="camera-outline"
+                  size={16}
+                  color={Colors.primary700}
+                />
+                <Text style={styles.processEvidenceBtnText}>Add evidence</Text>
+              </TouchableOpacity>
+              <Text style={styles.processEvidenceCount}>
+                {processEvidenceUris.length} photo(s)
+              </Text>
+            </View>
+
+            {processEvidenceUris.length ? (
+              <View style={styles.photoGrid}>
+                {processEvidenceUris.map((uri, idx) => (
+                  <View key={`${uri}-${idx}`} style={styles.photoItem}>
+                    <TouchableOpacity onPress={() => handleOpenImage(uri)}>
+                      <Image
+                        source={{ uri }}
+                        style={styles.photoImage}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.photoRemoveBtn}
+                      onPress={() =>
+                        setProcessEvidenceUris((prev) =>
+                          prev.filter((_, i) => i !== idx),
+                        )
+                      }
+                    >
+                      <Ionicons name="close" size={14} color={Colors.white} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            <TouchableOpacity
+              style={[
+                styles.bottomActionButton,
+                actionLoading && styles.bottomActionButtonDisabled,
+              ]}
+              activeOpacity={0.85}
+              disabled={actionLoading}
+              onPress={handleSubmitPostReturnProcess}
+            >
+              {actionLoading ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <>
+                  <Ionicons
+                    name="checkmark-outline"
+                    size={16}
+                    color={Colors.white}
+                  />
+                  <Text style={styles.bottomActionText}>Submit</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={scheduleModalVisible} transparent animationType="fade">
+        <View style={styles.modalBackground}>
+          <View style={styles.processModalCard}>
+            <View style={styles.processModalHeader}>
+              <Text style={styles.processModalTitle}>Set ShippingDate</Text>
+              <TouchableOpacity
+                onPress={() => setScheduleModalVisible(false)}
+                disabled={actionLoading}
+              >
+                <Ionicons name="close" size={22} color={Colors.gray600} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.processHint}>
+              Enter delivery date/time (must be now or future).
+            </Text>
+
+            <TextInput
+              value={scheduleDate}
+              onChangeText={setScheduleDate}
+              editable={!actionLoading}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={Colors.gray400}
+              style={styles.processInput}
+              autoCapitalize="none"
+            />
+
+            <TextInput
+              value={scheduleTime}
+              onChangeText={setScheduleTime}
+              editable={!actionLoading}
+              placeholder="HH:mm"
+              placeholderTextColor={Colors.gray400}
+              style={styles.processInput}
+              autoCapitalize="none"
+            />
+
+            <TextInput
+              value={scheduleNote}
+              onChangeText={setScheduleNote}
+              editable={!actionLoading}
+              placeholder="Note (optional)"
+              placeholderTextColor={Colors.gray400}
+              style={[styles.processInput, styles.processTextArea]}
+              multiline
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.bottomActionButton,
+                actionLoading && styles.bottomActionButtonDisabled,
+              ]}
+              activeOpacity={0.85}
+              disabled={actionLoading}
+              onPress={handleSubmitSchedule}
+            >
+              {actionLoading ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <>
+                  <Ionicons
+                    name="save-outline"
+                    size={16}
+                    color={Colors.white}
+                  />
+                  <Text style={styles.bottomActionText}>Save</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -1617,5 +2151,77 @@ const styles = StyleSheet.create({
     top: 50,
     right: 20,
     zIndex: 10,
+  },
+
+  processModalCard: {
+    width: "92%",
+    maxWidth: 520,
+    backgroundColor: Colors.white,
+    borderRadius: 14,
+    padding: Spacing.base,
+    borderWidth: 1,
+    borderColor: "#D8E1EB",
+  },
+  processModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  processModalTitle: {
+    flex: 1,
+    color: Colors.primary900,
+    fontSize: Typography.lg,
+    fontWeight: "800",
+  },
+  processHint: {
+    marginTop: 6,
+    color: Colors.gray600,
+    fontSize: Typography.sm,
+    lineHeight: 18,
+    marginBottom: Spacing.base,
+  },
+  processInput: {
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    backgroundColor: "#F8FAFD",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: Colors.gray800,
+    fontSize: Typography.base,
+    marginBottom: 10,
+  },
+  processTextArea: {
+    minHeight: 84,
+    textAlignVertical: "top",
+  },
+  processEvidenceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: Spacing.sm,
+  },
+  processEvidenceBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#B9CDE2",
+    backgroundColor: "#ECF4FC",
+  },
+  processEvidenceBtnText: {
+    color: Colors.primary700,
+    fontSize: Typography.base,
+    fontWeight: "700",
+  },
+  processEvidenceCount: {
+    color: Colors.gray600,
+    fontSize: Typography.sm,
+    fontWeight: "600",
   },
 });

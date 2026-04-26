@@ -462,6 +462,51 @@ export const updateShippingTaskReturned = (
     }),
   });
 
+/**
+ * Update ShippingDate for a shipping task (schedule).
+ * Backend route may differ; we retry common variants on 404.
+ */
+export async function updateShippingTaskShippingDate(
+  taskId: string,
+  payload: { shippingDate: string; note?: string },
+): Promise<ApiResponse<Task>> {
+  const body = JSON.stringify({
+    shippingDate: payload.shippingDate,
+    ...(payload.note ? { note: payload.note } : {}),
+  });
+
+  const attempts: Array<{ path: string; method: "PUT" | "PATCH" }> = [
+    { path: `/api/ShippingTasks/${taskId}/shipping-date`, method: "PUT" },
+    { path: `/api/ShippingTasks/${taskId}/shippingDate`, method: "PUT" },
+    { path: `/api/ShippingTasks/${taskId}/update-shipping-date`, method: "PUT" },
+    { path: `/api/ShippingTasks/${taskId}/shipping-date`, method: "PATCH" },
+    { path: `/api/ShippingTasks/${taskId}/shippingDate`, method: "PATCH" },
+    { path: `/api/ShippingTasks/${taskId}`, method: "PATCH" },
+  ];
+
+  let lastError: Error | null = null;
+
+  for (const { path, method } of attempts) {
+    try {
+      return await apiFetch<Task>(path, { method, body });
+    } catch (e: any) {
+      const message = String(e?.message ?? e ?? "");
+      if (message.includes("404")) {
+        lastError = e instanceof Error ? e : new Error(message);
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  throw (
+    lastError ??
+    new Error(
+      "No ShippingDate update endpoint matched. Ask backend for the route to update ShippingTasks.shippingDate.",
+    )
+  );
+}
+
 //  ServiceTasks/:taskId
 
 export const fetchTaskById = (taskId: string) =>
@@ -530,14 +575,38 @@ export const updateTaskProcessingStatus = (taskId: string) =>
     method: "PATCH",
   });
 
-export const updateTaskCheckedOutStatus = (taskId: string, note?: string) => {
-  const body = note ? { staffNote: note } : undefined;
-
+export const updateTaskCheckedOutStatus = (
+  taskId: string,
+  payload?: { evidenceUrls?: string[]; staffNote?: string },
+) => {
   return apiFetch<Task>(`/api/ServiceTasks/${taskId}/updateCheckedOutStatus`, {
     method: "PATCH",
-    ...(body ? { body: JSON.stringify(body) } : {}),
+    body: JSON.stringify({
+      evidenceUrls: payload?.evidenceUrls ?? [],
+      ...(payload?.staffNote ? { staffNote: payload.staffNote } : {}),
+    }),
   });
 };
+
+export const updateTaskForcedCancelledStatus = (
+  taskId: string,
+  payload?: { staffNote?: string },
+) =>
+  apiFetch<Task>(`/api/ServiceTasks/${taskId}/updateForcedCancelledStatus`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      staffNote: payload?.staffNote ?? "",
+    }),
+  });
+
+export const updateTaskCheckedInStatusWithEvidence = (
+  taskId: string,
+  evidenceUrls: string[],
+) =>
+  apiFetch<Task>(`/api/ServiceTasks/${taskId}/updateCheckedInStatus`, {
+    method: "PATCH",
+    body: JSON.stringify({ evidenceUrls: evidenceUrls ?? [] }),
+  });
 
 //  ServiceTasks/:taskId/notes
 
@@ -640,7 +709,7 @@ const uploadEvidencePhoto = async (
         } catch (secondError: any) {
           lastError = new Error(
             secondError?.message ||
-              `Khong the tai anh len qua /api/ServiceEvidences cho task ${payload.taskId}`,
+              `Cannot upload image /api/ServiceEvidences for task ${payload.taskId}`,
           );
           continue;
         }
@@ -648,7 +717,7 @@ const uploadEvidencePhoto = async (
 
       lastError = new Error(
         firstError?.message ||
-          `Khong the tai anh len qua /api/ServiceEvidences cho task ${payload.taskId}`,
+          `Cannot upload image /api/ServiceEvidences for task ${payload.taskId}`,
       );
     }
   }
@@ -656,7 +725,7 @@ const uploadEvidencePhoto = async (
   throw (
     lastError ||
     new Error(
-      `Khong the tai anh len qua /api/ServiceEvidences cho task ${payload.taskId}`,
+      `Cannot upload image /api/ServiceEvidences for task ${payload.taskId}`,
     )
   );
 };
@@ -811,11 +880,14 @@ export const fetchTradeInOrderById = (tradeInOrderId: string) =>
 
 export const updateTradeInOrderProcessing = (
   tradeInOrderId: string,
-  notes?: string,
+  payload?: { notes?: string; shippingDate?: string },
 ) =>
   apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}/processing`, {
     method: "PATCH",
-    body: JSON.stringify(notes ? { notes } : {}),
+    body: JSON.stringify({
+      ...(payload?.notes ? { notes: payload.notes } : {}),
+      ...(payload?.shippingDate ? { shippingDate: payload.shippingDate } : {}),
+    }),
   });
 
 //  [API: PATCH /api/TradeInOrders/:tradeInOrderId/delivered]
@@ -875,35 +947,35 @@ export const uploadTradeInOrderImage = (
 
 //  SHIPPING TASKS for TRADE-IN
 
-//  [API: PUT /api/ShippingTasks/:taskId/delivering-for-tradein]
+//  [API: PUT /api/ShippingTasks/:taskId/delivering-for-tradeIn]
 
 export const updateShippingTaskDeliveringForTradeIn = (
   taskId: string,
   payload: ShippingTaskStatusPayload = {},
 ) =>
-  apiFetch<Task>(`/api/ShippingTasks/${taskId}/delivering-for-tradein`, {
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/delivering-for-tradeIn`, {
     method: "PUT",
     body: JSON.stringify({ evidenceUrls: payload.evidenceUrls ?? [] }),
   });
 
-//  [API: PUT /api/ShippingTasks/:taskId/delivered-for-tradein]
+//  [API: PUT /api/ShippingTasks/:taskId/delivered-for-tradeIn]
 
 export const updateShippingTaskDeliveredForTradeIn = (
   taskId: string,
   payload: ShippingTaskStatusPayload = {},
 ) =>
-  apiFetch<Task>(`/api/ShippingTasks/${taskId}/delivered-for-tradein`, {
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/delivered-for-tradeIn`, {
     method: "PUT",
     body: JSON.stringify({ evidenceUrls: payload.evidenceUrls ?? [] }),
   });
 
-//  [API: PUT /api/ShippingTasks/:taskId/returned-for-tradein]
+//  [API: PUT /api/ShippingTasks/:taskId/returned-for-TradeIn]
 
 export const updateShippingTaskReturnedForTradeIn = (
   taskId: string,
   payload: ShippingTaskStatusPayload,
 ) =>
-  apiFetch<Task>(`/api/ShippingTasks/${taskId}/returned-for-tradein`, {
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/returned-for-TradeIn`, {
     method: "PUT",
     body: JSON.stringify({
       reason: payload.reason ?? "",
@@ -925,24 +997,24 @@ export const updateShippingTaskForceCancelledForTradeIn = (
     }),
   });
 
-//  [API: POST /api/ShippingTasks/:taskId/process-returned-for-tradein]
+//  [API: POST /api/ShippingTasks/:taskId/process-returned-for-tradeIn]
 
 export const processReturnedForTradeIn = (
   taskId: string,
   payload?: Record<string, any>,
 ) =>
-  apiFetch<Task>(`/api/ShippingTasks/${taskId}/process-returned-for-tradein`, {
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/process-returned-for-tradeIn`, {
     method: "POST",
     body: JSON.stringify(payload ?? {}),
   });
 
-//  [API: POST /api/ShippingTasks/:taskId/process-exchange-for-tradein]
+//  [API: POST /api/ShippingTasks/:taskId/process-exchange-for-tradeIn]
 
 export const processExchangeForTradeIn = (
   taskId: string,
   payload?: Record<string, any>,
 ) =>
-  apiFetch<Task>(`/api/ShippingTasks/${taskId}/process-exchange-for-tradein`, {
+  apiFetch<Task>(`/api/ShippingTasks/${taskId}/process-exchange-for-tradeIn`, {
     method: "POST",
     body: JSON.stringify(payload ?? {}),
   });

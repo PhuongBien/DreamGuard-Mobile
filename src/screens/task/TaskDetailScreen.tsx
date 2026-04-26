@@ -9,6 +9,8 @@ import {
   Alert,
   Image,
   ActivityIndicator,
+  Modal,
+  TextInput,
 } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
@@ -86,9 +88,12 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     tasks,
     getTaskById,
     checkIn,
+    checkInWithEvidence,
     startProcessing,
     checkOut,
+    checkOutWithEvidence,
     completeTask,
+    forcedCancel,
   } = useTask();
 
   const task = useMemo(
@@ -99,6 +104,8 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const [statusLoading, setStatusLoading] = useState(false);
   const [taskRating, setTaskRating] = useState<Rating | null>(null);
   const [showPhotoReminder, setShowPhotoReminder] = useState(false);
+  const [cancelModalVisible, setCancelModalVisible] = useState(false);
+  const [forcedCancelNote, setForcedCancelNote] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -308,8 +315,41 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     const bTime = new Date(b.uploadedAt || 0).getTime();
     return bTime - aTime;
   });
+
+  const dedupedSortedPhotoList = useMemo(() => {
+    const seen = new Set<string>();
+    const out: typeof sortedPhotoList = [];
+
+    for (const p of sortedPhotoList) {
+      const key = String(p?.url ?? "").trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ ...p, url: key });
+    }
+
+    return out;
+  }, [sortedPhotoList]);
   const displayAddress =
     formatVietnamAddress(task.customer.address) || "No address available";
+
+  const getEvidenceUrlsFor = useCallback(
+    (kind: "checkin" | "checkout") => {
+      const allUrls = (dedupedSortedPhotoList || [])
+        .map((p) => String(p?.url ?? "").trim())
+        .filter(Boolean);
+
+      const preferredType = kind === "checkin" ? "before" : "after";
+      const preferred = (dedupedSortedPhotoList || [])
+        .filter((p) => p?.type === preferredType)
+        .map((p) => String(p?.url ?? "").trim())
+        .filter(Boolean);
+
+      const merged = preferred.length ? preferred : allUrls;
+      // Keep payload small but sufficient.
+      return Array.from(new Set(merged)).slice(0, 5);
+    },
+    [dedupedSortedPhotoList],
+  );
 
   const handlePrimaryAction = async () => {
     try {
@@ -325,16 +365,33 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             : latestTask.status;
 
       if (latestEffectiveStatus === "pending") {
-        await checkIn(task.id);
-      } else if (latestEffectiveStatus === "checked_in") {
-        await startProcessing(task.id);
+        const evidenceUrls = getEvidenceUrlsFor("checkin");
+        if (!evidenceUrls.length) {
+          Alert.alert(
+            "No images",
+            "Please upload your photos in the Images section before Check-in.",
+          );
+          return;
+        }
+        await checkInWithEvidence(task.id, evidenceUrls);
       } else if (latestEffectiveStatus === "in_progress") {
-        await checkOut(task.id);
+        const evidenceUrls = getEvidenceUrlsFor("checkout");
+        if (!evidenceUrls.length) {
+          Alert.alert(
+            "No images",
+            "Please upload your photos in the Images section before Check-out.",
+          );
+          return;
+        }
+        await checkOutWithEvidence(task.id, evidenceUrls);
         setShowPhotoReminder(true);
       } else if (latestEffectiveStatus === "checked_out") {
         if (task.type !== "cleaning") {
           await completeTask(task.id);
         }
+      } else if (latestEffectiveStatus === "checked_in") {
+        // Processing is handled by the dedicated button (shown in parallel with Cancelled).
+        return;
       }
     } catch (error) {
       const msg = (error as any)?.message || "Unable to update status.";
@@ -344,6 +401,34 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     }
   };
 
+  const handleStartProcessing = useCallback(async () => {
+    try {
+      setStatusLoading(true);
+      await startProcessing(task.id);
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Unable to start processing.");
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [startProcessing, task.id]);
+
+  const submitForcedCancel = useCallback(async () => {
+    const note = forcedCancelNote.trim();
+    if (!note) {
+      Alert.alert("Missing notes", "Please enter the reason for canceling your order.");
+      return;
+    }
+    try {
+      setStatusLoading(true);
+      await forcedCancel(task.id, { staffNote: note });
+      setCancelModalVisible(false);
+      setForcedCancelNote("");
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Task cannot be canceled.");
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [forcedCancel, forcedCancelNote, task.id]);
   const handleOpenPhotoUpload = (type: "before" | "after") => {
     navigation.navigate("PhotoUpload", {
       shippingTaskId: task.id,
@@ -553,6 +638,8 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
               {formatTime(task.checkInOut.checkOut.time)}
             </Text>
           )}
+
+          {/* Evidence upload is handled in the Images section. */}
         </View>
 
         <View style={styles.card}>
@@ -560,7 +647,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
 
           <View style={styles.photoHeaderRow}>
             <Text style={styles.photoLabel}>
-              All Photos ({sortedPhotoList.length})
+              All Photos ({dedupedSortedPhotoList.length})
             </Text>
           </View>
 
@@ -593,8 +680,8 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           </View>
 
           <View style={styles.photoGrid}>
-            {sortedPhotoList.length ? (
-              sortedPhotoList.map((photo, index) => (
+            {dedupedSortedPhotoList.length ? (
+              dedupedSortedPhotoList.map((photo, index) => (
                 <View key={`${photo.id}_${index}`} style={styles.photoItem}>
                   <Image
                     source={{ uri: photo.url }}
@@ -623,7 +710,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
               <View style={styles.photoReminder}>
                 <Ionicons name="camera" size={20} color={Colors.primary500} />
                 <Text style={styles.photoReminderText}>
-                  Please take a photo after completing the order.
+                  Please take a photo after completing the task.
                 </Text>
               </View>
             )}
@@ -666,7 +753,49 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         )}
       </ScrollView>
 
-      {!!primaryNextStatus && (
+      {effectiveStatus === "checked_in" ? (
+        <View style={styles.bottomActionWrapper}>
+          <View style={styles.dualBottomRow}>
+            <TouchableOpacity
+              style={[
+                styles.bottomActionButton,
+                styles.dualBottomBtn,
+                statusLoading && styles.bottomActionButtonDisabled,
+              ]}
+              onPress={handleStartProcessing}
+              disabled={statusLoading}
+              activeOpacity={0.85}
+            >
+              {statusLoading ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <>
+                  <Ionicons name="play-outline" size={16} color={Colors.white} />
+                  <Text style={styles.bottomActionText}>Processing</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.cancelActionButton,
+                styles.dualBottomBtn,
+                statusLoading && styles.bottomActionButtonDisabled,
+              ]}
+              onPress={() => setCancelModalVisible(true)}
+              disabled={statusLoading}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="close-circle-outline"
+                size={16}
+                color={Colors.white}
+              />
+              <Text style={styles.cancelActionText}>Cancelled</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : !!primaryNextStatus ? (
         <View style={styles.bottomActionWrapper}>
           <TouchableOpacity
             style={[
@@ -693,7 +822,59 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             )}
           </TouchableOpacity>
         </View>
-      )}
+      ) : null}
+
+      <Modal
+        visible={cancelModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCancelModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Cancel order</Text>
+            <Text style={styles.modalSubTitle}>
+              Enter the reason for canceling the order.
+            </Text>
+
+            <TextInput
+              value={forcedCancelNote}
+              onChangeText={setForcedCancelNote}
+              placeholder="Example: Called 3 times and no one answered..."
+              placeholderTextColor={Colors.gray400}
+              style={styles.modalInput}
+              multiline
+            />
+
+            <View style={styles.modalActionsRow}>
+              <TouchableOpacity
+                style={styles.modalSecondaryBtn}
+                onPress={() => setCancelModalVisible(false)}
+                activeOpacity={0.85}
+                disabled={statusLoading}
+              >
+                <Text style={styles.modalSecondaryText}>Close</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.modalDangerBtn,
+                  statusLoading && styles.bottomActionButtonDisabled,
+                ]}
+                onPress={submitForcedCancel}
+                activeOpacity={0.85}
+                disabled={statusLoading}
+              >
+                {statusLoading ? (
+                  <ActivityIndicator color={Colors.white} />
+                ) : (
+                  <Text style={styles.modalDangerText}>Confirm </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1042,6 +1223,99 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontSize: Typography.lg,
     fontWeight: "700",
+  },
+  dualBottomRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  dualBottomBtn: {
+    flex: 1,
+  },
+  cancelActionButton: {
+    backgroundColor: "#B91C1C",
+    borderRadius: 12,
+    minHeight: 52,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  cancelActionText: {
+    color: Colors.white,
+    fontSize: Typography.lg,
+    fontWeight: "800",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    padding: Spacing.base,
+  },
+  modalCard: {
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    padding: Spacing.base,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    ...Shadow.base,
+  },
+  modalTitle: {
+    color: "#1F3C65",
+    fontSize: Typography.lg,
+    fontWeight: "800",
+  },
+  modalSubTitle: {
+    marginTop: 6,
+    color: "#49658A",
+    fontSize: Typography.sm,
+    fontWeight: "500",
+  },
+  modalInput: {
+    marginTop: Spacing.sm,
+    minHeight: 90,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 12,
+    padding: 10,
+    color: "#23364D",
+    fontSize: Typography.base,
+    lineHeight: 20,
+    backgroundColor: "#F8FAFD",
+  },
+  modalActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: Spacing.base,
+  },
+  modalSecondaryBtn: {
+    flex: 1,
+    borderRadius: 12,
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#E7EDF4",
+    borderWidth: 1,
+    borderColor: "#D2DDEB",
+  },
+  modalSecondaryText: {
+    color: "#35577F",
+    fontSize: Typography.base,
+    fontWeight: "700",
+    
+  },
+  modalDangerBtn: {
+    flex: 1,
+    borderRadius: 12,
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#B91C1C",
+    
+  },
+  modalDangerText: {
+    color: Colors.white,
+    fontSize: Typography.base,
+    fontWeight: "800",
   },
   ratingRow: {
     flexDirection: "row",

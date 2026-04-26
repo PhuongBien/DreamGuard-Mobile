@@ -229,11 +229,16 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       ...(task?.photos || []).map((photo) => photo.url),
     ];
 
-    return Array.from(new Set(merged.filter(Boolean)));
+    return Array.from(
+      new Set(merged.map((url) => String(url ?? "").trim()).filter(Boolean)),
+    );
   }, [task]);
 
   const groupedImageSections = useMemo(() => {
-    const photos = task?.photos || [];
+    const photos = (task?.photos || []).map((p) => ({
+      ...p,
+      url: String(p?.url ?? "").trim(),
+    }));
     const photoUrls = new Set(photos.map((photo) => photo.url).filter(Boolean));
     const sections = [
       {
@@ -264,6 +269,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
           ...photos.filter((photo) => !photo.captureStage),
 
           ...(task?.relatedImageUrls || [])
+            .map((url) => String(url ?? "").trim())
             .filter((url) => !!url && !photoUrls.has(url))
             .map((url, index) => ({
               id: `related_${index}_${url}`,
@@ -274,6 +280,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
             })),
 
           ...((task as any)?.evidenceUrls || [])
+            .map((url: string) => String(url ?? "").trim())
             .filter((url: string) => !!url && !photoUrls.has(url))
             .map((url: string, index: number) => ({
               id: `evidence_${index}_${url}`,
@@ -1331,6 +1338,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     minHeight: 54,
+    width: 200,
     borderRadius: 14,
     backgroundColor: Colors.primary700,
     alignItems: "center",

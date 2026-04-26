@@ -104,11 +104,11 @@ export class TradeInOrderService {
 
   static async updateProcessing(
     tradeInOrderId: string,
-    notes?: string,
+    payload?: { notes?: string; shippingDate?: string },
   ): Promise<TradeInOrder | null> {
     const response = await apiUpdateTradeInOrderProcessing(
       tradeInOrderId,
-      notes,
+      payload,
     );
 
     if (!response.success || !response.data) {

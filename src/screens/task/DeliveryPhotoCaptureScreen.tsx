@@ -49,12 +49,21 @@ export default function DeliveryPhotoCaptureScreen({
   const [loading, setLoading] = useState(false);
 
   const isReturnedMode = mode === "returned";
-  const usesCustomReason = isReturnedMode && reason === "Other reasons.";
+  const isForcedCancelledMode = mode === "forced_cancelled";
+  const needsReason = isReturnedMode || isForcedCancelledMode;
+  const usesCustomReason = needsReason && reason === "Other reasons.";
   const finalReason = usesCustomReason ? customReason.trim() : reason.trim();
 
   const copy = useMemo(
     () =>
-      isReturnedMode
+      isForcedCancelledMode
+        ? {
+            title: "Forced cancel (trade-in).",
+            subtitle:
+              "Capture evidence and provide a reason (e.g. old device not matching the negotiation).",
+            button: "Confirm forced cancel",
+          }
+        : isReturnedMode
         ? {
             title: "Delivery failed.",
             subtitle:
@@ -66,7 +75,7 @@ export default function DeliveryPhotoCaptureScreen({
             subtitle: "Capture evidence of successful delivery.",
             button: "Confirm successful delivery",
           },
-    [isReturnedMode],
+    [isReturnedMode, isForcedCancelledMode],
   );
 
   const takePhoto = async () => {
@@ -111,10 +120,10 @@ export default function DeliveryPhotoCaptureScreen({
       return;
     }
 
-    if (isReturnedMode && !finalReason) {
+    if (needsReason && !finalReason) {
       Alert.alert(
         "Missing reason",
-        "You need to select a reason for the failed delivery.",
+        "You need to select a reason before confirming.",
       );
       return;
     }
@@ -132,7 +141,13 @@ export default function DeliveryPhotoCaptureScreen({
         if (!uploadedUrls.length) {
           throw new Error("Could not upload evidence images.");
         }
-        if (isReturnedMode) {
+        if (isForcedCancelledMode) {
+          await DeliveryTaskService.markForcedCancelledForTradeIn(
+            shippingTaskId,
+            finalReason,
+            uploadedUrls,
+          );
+        } else if (isReturnedMode) {
           await DeliveryTaskService.markReturnedForTradeIn(
             shippingTaskId,
             finalReason,
@@ -155,7 +170,9 @@ export default function DeliveryPhotoCaptureScreen({
             uploadedBy: "delivery_staff",
             captureStage: isReturnedMode
               ? "delivery_failed"
-              : "delivery_success",
+              : isForcedCancelledMode
+                ? "delivery_failed"
+                : "delivery_success",
           });
           uploadedUrls.push(uploadedUrl);
         }
@@ -169,9 +186,11 @@ export default function DeliveryPhotoCaptureScreen({
 
       Alert.alert(
         "Success",
-        isReturnedMode
-          ? "The task has been updated as a failed delivery."
-          : "The task has been updated as a successful delivery.",
+        isForcedCancelledMode
+          ? "The task has been updated as forced cancelled."
+          : isReturnedMode
+            ? "The task has been updated as a failed delivery."
+            : "The task has been updated as a successful delivery.",
         [{ text: "OK", onPress: () => navigation.goBack() }],
       );
     } catch (error: any) {
@@ -189,7 +208,7 @@ export default function DeliveryPhotoCaptureScreen({
       <Text style={styles.title}>{copy.title}</Text>
       <Text style={styles.subtitle}>{copy.subtitle}</Text>
 
-      {isReturnedMode ? (
+      {needsReason ? (
         <View style={styles.reasonBlock}>
           <Text style={styles.sectionLabel}>Select a reason</Text>
 

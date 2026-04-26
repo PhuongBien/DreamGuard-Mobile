@@ -62,7 +62,7 @@ export type TaskStackParamList = {
 
   DeliveryPhotoCapture: {
     shippingTaskId: string;
-    mode: "delivered" | "returned";
+    mode: "delivered" | "returned" | "forced_cancelled";
     /** Use trade-in shipping APIs + Cloudinary upload without TaskContext */
     tradeInFlow?: boolean;
     tradeInOrderId?: string;
