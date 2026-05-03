@@ -23,9 +23,10 @@ import {
 
 type Props = NativeStackScreenProps<TaskStackParamList, "PhotoUpload">;
 
-const PHOTO_LABELS: Record<"before" | "after", string> = {
+const PHOTO_LABELS: Record<"before" | "after" | "payment", string> = {
   before: "Before Photo",
   after: "After Photo",
+  payment: "Payment Confirmation",
 };
 
 export const PhotoUploadScreen = ({ route, navigation }: Props) => {
@@ -38,37 +39,6 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
     mimeType?: string;
   } | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const pickFromLibrary = async () => {
-    try {
-      const { status } =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== "granted") {
-        // Alert.alert("Permission denied", "Permission to access the photo library is required.");
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets.length > 0) {
-        const asset = result.assets[0];
-        setImageUri(asset.uri);
-        setImageMeta({
-          fileName: asset.fileName || undefined,
-          mimeType: asset.mimeType || undefined,
-        });
-      }
-    } catch (error: any) {
-      Alert.alert(
-        "Error selecting image",
-        error?.message || "Unable to open image library.",
-      );
-    }
-  };
 
   const takePhoto = async () => {
     try {
@@ -101,19 +71,8 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
   };
 
   const handleChooseImage = () => {
-    if (photoType === "after") {
-      takePhoto();
-    } else {
-      Alert.alert(
-        "Choose Image",
-        "Do you want to take a new photo or select from the library?",
-        [
-          { text: "Take Photo", onPress: takePhoto },
-          { text: "Library", onPress: pickFromLibrary },
-          { text: "Cancel", style: "cancel" },
-        ],
-      );
-    }
+    // Only allow capturing a new photo via camera (no library uploads).
+    takePhoto();
   };
 
   const handleUpload = async () => {
@@ -167,9 +126,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
           <View style={styles.placeholderWrap}>
             <Ionicons name="camera-outline" size={40} color={Colors.gray400} />
             <Text style={styles.placeholder}>
-              {photoType === "after"
-                ? "Tap to take a photo"
-                : "Tap to select or take a photo"}
+              Tap to take a photo
             </Text>
           </View>
         )}
@@ -186,7 +143,7 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
             size={16}
             color={Colors.primary700}
           />
-          <Text style={styles.rePickText}>Choose another image</Text>
+          <Text style={styles.rePickText}>Retake photo</Text>
         </TouchableOpacity>
       )}
 

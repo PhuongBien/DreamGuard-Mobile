@@ -38,7 +38,7 @@ export type DeliveryEvidenceStage =
 export interface TaskPhoto {
   id: string;
   url: string;
-  type: "before" | "after" | "evidence";
+  type: "before" | "after" | "payment" | "evidence";
   uploadedAt: string;
   uploadedBy: string;
   captureStage?: DeliveryEvidenceStage;
@@ -155,11 +155,15 @@ export interface Task {
   itemName?: string;
   tags?: string[];
   serviceOrderStatus?: string;
+  serviceOrderId?: string;
   paymentMethod?: string;
   paymentStatus?: string;
   totalPrice?: number;
   customerNote?: string;
   appointmentDateRaw?: string;
+  isRescheduledAppointment?: boolean;
+  /** Service task superseded after reschedule — wait for manager to spin up work on a new row */
+  rescheduleAwaitingNewTask?: boolean;
 
   customer: CustomerInfo;
   products?: ProductItem[];

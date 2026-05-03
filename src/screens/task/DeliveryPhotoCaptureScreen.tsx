@@ -15,6 +15,7 @@ import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useTask } from "../../context/TaskContext";
+import { Task } from "../../types";
 import { TaskStackParamList } from "../../types/navigation";
 import { uploadImageToCloudinary } from "../../utils/cloudinary";
 import { DeliveryTaskService } from "../../services/delivery-task.service";
@@ -28,31 +29,89 @@ import {
 
 type Props = NativeStackScreenProps<TaskStackParamList, "DeliveryPhotoCapture">;
 
-const FAILED_REASONS = [
-  "The guest is not home.",
-  "Cannot contact the guest.",
-  "The guest refused to receive the item.",
-  "Incorrect delivery address.",
-  "Other reasons.",
-];
+type ReturnOutcome = "delivery_failed" | "return" | "exchange";
+
+const RETURN_OUTCOME_LABELS: Record<ReturnOutcome, string> = {
+  delivery_failed: "Giao không thành công",
+  return: "Return (hoàn hàng)",
+  exchange: "Exchange (đổi mới)",
+};
+
+const RETURN_REASONS: Record<ReturnOutcome, string[]> = {
+  delivery_failed: [
+    "Khách không có nhà",
+    "Không liên hệ được khách",
+    "Khách từ chối nhận hàng",
+    "Sai địa chỉ giao hàng",
+    "Khác",
+  ],
+  return: [
+    "Khách yêu cầu hoàn",
+    "Sản phẩm bị hư hại",
+    "Giao sai mẫu / sai sản phẩm",
+    "Thiếu phụ kiện / thiếu hàng",
+    "Khác",
+  ],
+  exchange: [
+    "Đổi mới do sản phẩm bị lỗi",
+    "Đổi mẫu / đổi sản phẩm theo yêu cầu",
+    "Giao sai mẫu → đổi đúng mẫu",
+    "Hẹn giao lại ngày khác",
+    "Khác",
+  ],
+};
+
+type DamagedDraft = {
+  selected: boolean;
+  damagedQuantity: number;
+  itemReason: string;
+};
 
 export default function DeliveryPhotoCaptureScreen({
   route,
   navigation,
 }: Props) {
-  const { shippingTaskId, mode, tradeInFlow, tradeInOrderId } = route.params;
-  const { markDelivered, markReturned, addTaskPhoto } = useTask();
+  const {
+    shippingTaskId,
+    mode,
+    tradeInFlow,
+    tradeInOrderId,
+    requiresCodPaymentEvidence = false,
+  } = route.params;
+  const { tasks, markDelivered, markReturned, addTaskPhoto } = useTask();
 
   const [imageUris, setImageUris] = useState<string[]>([]);
-  const [reason, setReason] = useState<string>(FAILED_REASONS[0]);
+  const [codPaymentUri, setCodPaymentUri] = useState<string | null>(null);
+  const [returnOutcome, setReturnOutcome] = useState<ReturnOutcome>(
+    "delivery_failed",
+  );
+  const [reason, setReason] = useState<string>(RETURN_REASONS.delivery_failed[0]);
   const [customReason, setCustomReason] = useState("");
   const [loading, setLoading] = useState(false);
+  const [damagedDraftByItemId, setDamagedDraftByItemId] = useState<
+    Record<string, DamagedDraft>
+  >({});
 
   const isReturnedMode = mode === "returned";
   const isForcedCancelledMode = mode === "forced_cancelled";
+  const needsCodReceipt =
+    !tradeInFlow && mode === "delivered" && requiresCodPaymentEvidence;
   const needsReason = isReturnedMode || isForcedCancelledMode;
-  const usesCustomReason = needsReason && reason === "Other reasons.";
+  const usesCustomReason = needsReason && reason.trim().toLowerCase() === "khác";
   const finalReason = usesCustomReason ? customReason.trim() : reason.trim();
+
+  const task = useMemo(
+    () => tasks.find((t: Task) => t.id === shippingTaskId),
+    [shippingTaskId, tasks],
+  );
+  const availableProducts = useMemo(
+    () => (task?.products || []).filter((p) => !!p?.id),
+    [task],
+  );
+  const itemReasonOptions = useMemo(
+    () => ["Bị hư hại", "Giao sai mẫu / sai sản phẩm", "Thiếu hàng", "Khác"],
+    [],
+  );
 
   const copy = useMemo(
     () =>
@@ -67,18 +126,20 @@ export default function DeliveryPhotoCaptureScreen({
         ? {
             title: "Delivery failed.",
             subtitle:
-              "Select a reason and capture evidence before returning the item.",
+              "Chọn trạng thái (giao không thành công / return / exchange), chọn lý do, chọn sản phẩm lỗi và chụp ảnh bằng chứng trước khi cập nhật.",
             button: "Confirm failed delivery",
           }
         : {
             title: "Delivery successful",
-            subtitle: "Capture evidence of successful delivery.",
+            subtitle: needsCodReceipt
+              ? "Capture delivery proof, then a separate photo proving COD payment was received."
+              : "Capture evidence of successful delivery.",
             button: "Confirm successful delivery",
           },
-    [isReturnedMode, isForcedCancelledMode],
+    [isReturnedMode, isForcedCancelledMode, needsCodReceipt],
   );
 
-  const takePhoto = async () => {
+  const takeDeliveryPhoto = async () => {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
 
@@ -111,11 +172,48 @@ export default function DeliveryPhotoCaptureScreen({
     }
   };
 
+  const takeCodPaymentPhoto = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+
+      if (permission.status !== "granted") {
+        Alert.alert(
+          "Missing camera permission",
+          "Camera permission is required to capture payment proof.",
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets.length > 0) {
+        setCodPaymentUri(result.assets[0].uri);
+      }
+    } catch (error: any) {
+      Alert.alert(
+        "Cannot take photo",
+        error?.message || "An error occurred while opening the camera.",
+      );
+    }
+  };
+
   const handleSubmit = async () => {
     if (!imageUris.length) {
       Alert.alert(
         "Missing evidence",
         "You need to capture a photo before confirming.",
+      );
+      return;
+    }
+
+    if (needsCodReceipt && !codPaymentUri) {
+      Alert.alert(
+        "Missing COD payment proof",
+        "COD orders require a photo proving payment was collected.",
       );
       return;
     }
@@ -178,9 +276,46 @@ export default function DeliveryPhotoCaptureScreen({
         }
 
         if (isReturnedMode) {
-          await markReturned(shippingTaskId, finalReason, uploadedUrls);
+          const damagedItems = Object.entries(damagedDraftByItemId)
+            .filter(([_, draft]) => draft?.selected && draft.damagedQuantity > 0)
+            .map(([orderItemId, draft]) => ({
+              orderItemId,
+              damagedQuantity: draft.damagedQuantity,
+            }));
+
+          const damagedNoteLines = Object.entries(damagedDraftByItemId)
+            .filter(([_, draft]) => draft?.selected && draft.damagedQuantity > 0)
+            .map(([orderItemId, draft]) => {
+              const product =
+                availableProducts.find((p) => p.id === orderItemId) ?? null;
+              const name = product?.name ? ` - ${product.name}` : "";
+              const detail = draft.itemReason?.trim()
+                ? ` (${draft.itemReason.trim()})`
+                : "";
+              return `• ${orderItemId}${name}: x${draft.damagedQuantity}${detail}`;
+            });
+
+          const outcomeLabel = RETURN_OUTCOME_LABELS[returnOutcome];
+          const baseReason = `${outcomeLabel} - ${finalReason}`.trim();
+          const reasonText = damagedNoteLines.length
+            ? `${baseReason}\nSản phẩm lỗi/đổi/hoàn:\n${damagedNoteLines.join("\n")}`
+            : baseReason;
+
+          await markReturned(shippingTaskId, {
+            reason: reasonText,
+            evidenceUrls: uploadedUrls,
+            damagedItems,
+          });
         } else {
-          await markDelivered(shippingTaskId, uploadedUrls);
+          let paymentEvidenceUrl: string | undefined;
+          if (needsCodReceipt && codPaymentUri) {
+            const url = await uploadImageToCloudinary(codPaymentUri);
+            if (!url) throw new Error("Could not upload COD payment proof.");
+            paymentEvidenceUrl = url;
+          }
+          await markDelivered(shippingTaskId, uploadedUrls, {
+            paymentEvidenceUrl,
+          });
         }
       }
 
@@ -210,10 +345,51 @@ export default function DeliveryPhotoCaptureScreen({
 
       {needsReason ? (
         <View style={styles.reasonBlock}>
-          <Text style={styles.sectionLabel}>Select a reason</Text>
+          {isReturnedMode ? (
+            <>
+              <Text style={styles.sectionLabel}>Trạng thái xử lý</Text>
+              <View style={styles.reasonWrap}>
+                {(Object.keys(RETURN_OUTCOME_LABELS) as ReturnOutcome[]).map(
+                  (key) => {
+                    const active = returnOutcome === key;
+                    return (
+                      <TouchableOpacity
+                        key={key}
+                        style={[
+                          styles.reasonChip,
+                          active && styles.reasonChipActive,
+                        ]}
+                        activeOpacity={0.85}
+                        disabled={loading}
+                        onPress={() => {
+                          setReturnOutcome(key);
+                          setReason(RETURN_REASONS[key][0]);
+                          setCustomReason("");
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.reasonText,
+                            active && styles.reasonTextActive,
+                          ]}
+                        >
+                          {RETURN_OUTCOME_LABELS[key]}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  },
+                )}
+              </View>
+            </>
+          ) : null}
+
+          <Text style={styles.sectionLabel}>Lý do</Text>
 
           <View style={styles.reasonWrap}>
-            {FAILED_REASONS.map((item) => {
+            {(isReturnedMode
+              ? RETURN_REASONS[returnOutcome]
+              : RETURN_REASONS.delivery_failed
+            ).map((item) => {
               const active = reason === item;
 
               return (
@@ -221,6 +397,7 @@ export default function DeliveryPhotoCaptureScreen({
                   key={item}
                   style={[styles.reasonChip, active && styles.reasonChipActive]}
                   activeOpacity={0.85}
+                  disabled={loading}
                   onPress={() => setReason(item)}
                 >
                   <Text
@@ -247,14 +424,141 @@ export default function DeliveryPhotoCaptureScreen({
               multiline
             />
           ) : null}
+
+          {isReturnedMode ? (
+            <View style={styles.damagedBlock}>
+              <Text style={styles.sectionLabel}>Chọn sản phẩm bị lỗi</Text>
+              {availableProducts.length ? (
+                availableProducts.map((product) => {
+                  const draft = damagedDraftByItemId[product.id] ?? {
+                    selected: false,
+                    damagedQuantity: 1,
+                    itemReason: itemReasonOptions[0],
+                  };
+                  const maxQty = Math.max(1, Number(product.quantity ?? 1));
+                  const qty = Math.min(
+                    Math.max(1, draft.damagedQuantity || 1),
+                    maxQty,
+                  );
+                  const active = !!draft.selected;
+
+                  return (
+                    <View key={product.id} style={styles.damagedRow}>
+                      <TouchableOpacity
+                        style={styles.damagedSelectBtn}
+                        activeOpacity={0.85}
+                        disabled={loading}
+                        onPress={() =>
+                          setDamagedDraftByItemId((prev) => ({
+                            ...prev,
+                            [product.id]: {
+                              ...draft,
+                              selected: !draft.selected,
+                              damagedQuantity: qty,
+                            },
+                          }))
+                        }
+                      >
+                        <Ionicons
+                          name={active ? "checkbox-outline" : "square-outline"}
+                          size={22}
+                          color={active ? Colors.primary700 : Colors.gray500}
+                        />
+                        <View style={styles.damagedInfo}>
+                          <Text style={styles.damagedName}>{product.name}</Text>
+                          <Text style={styles.damagedMeta}>
+                            SL tối đa: {maxQty}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      <View style={styles.damagedControls}>
+                        <View style={styles.qtyRow}>
+                          <Text style={styles.qtyLabel}>Số lượng</Text>
+                          <TextInput
+                            style={[
+                              styles.qtyInput,
+                              !active && styles.qtyInputDisabled,
+                            ]}
+                            value={String(qty)}
+                            editable={active && !loading}
+                            keyboardType="number-pad"
+                            onChangeText={(txt) => {
+                              const raw = Number(txt.replace(/[^\d]/g, ""));
+                              const next = Number.isFinite(raw) ? raw : 1;
+                              const clamped = Math.min(
+                                Math.max(1, next),
+                                maxQty,
+                              );
+                              setDamagedDraftByItemId((prev) => ({
+                                ...prev,
+                                [product.id]: {
+                                  ...draft,
+                                  selected: true,
+                                  damagedQuantity: clamped,
+                                },
+                              }));
+                            }}
+                          />
+                        </View>
+
+                        <Text style={styles.qtyLabel}>Lý do sản phẩm</Text>
+                        <View style={styles.itemReasonWrap}>
+                          {itemReasonOptions.map((opt) => {
+                            const on = draft.itemReason === opt;
+                            return (
+                              <TouchableOpacity
+                                key={`${product.id}_${opt}`}
+                                style={[
+                                  styles.itemReasonChip,
+                                  on && styles.itemReasonChipActive,
+                                  (!active || loading) &&
+                                    styles.itemReasonChipDisabled,
+                                ]}
+                                activeOpacity={0.85}
+                                disabled={!active || loading}
+                                onPress={() =>
+                                  setDamagedDraftByItemId((prev) => ({
+                                    ...prev,
+                                    [product.id]: {
+                                      ...draft,
+                                      selected: true,
+                                      itemReason: opt,
+                                    },
+                                  }))
+                                }
+                              >
+                                <Text
+                                  style={[
+                                    styles.itemReasonText,
+                                    on && styles.itemReasonTextActive,
+                                  ]}
+                                >
+                                  {opt}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })
+              ) : (
+                <Text style={styles.damagedEmpty}>
+                  Không tìm thấy danh sách sản phẩm trong đơn để chọn.
+                </Text>
+              )}
+            </View>
+          ) : null}
         </View>
       ) : null}
 
-      <Text style={styles.sectionLabel}>Evidence photos</Text>
+      <Text style={styles.sectionLabel}>Delivery evidence photos</Text>
       <TouchableOpacity
         style={styles.captureBox}
         activeOpacity={0.85}
-        onPress={takePhoto}
+        onPress={takeDeliveryPhoto}
         disabled={loading}
       >
         {imageUris.length ? (
@@ -280,7 +584,7 @@ export default function DeliveryPhotoCaptureScreen({
         style={styles.retakeButton}
         activeOpacity={0.85}
         disabled={loading}
-        onPress={takePhoto}
+        onPress={takeDeliveryPhoto}
       >
         <Ionicons name="refresh-outline" size={16} color={Colors.primary700} />
         <Text style={styles.retakeText}>
@@ -296,17 +600,86 @@ export default function DeliveryPhotoCaptureScreen({
           onPress={() => setImageUris([])}
         >
           <Ionicons name="trash-outline" size={16} color={Colors.error} />
-          <Text style={styles.clearButtonText}>Clear all photos</Text>
+          <Text style={styles.clearButtonText}>Clear all delivery photos</Text>
         </TouchableOpacity>
+      ) : null}
+
+      {needsCodReceipt ? (
+        <>
+          <Text style={styles.sectionLabel}>
+            COD — proof payment received{" "}
+            <Text style={styles.requiredMark}>*</Text>
+          </Text>
+          <TouchableOpacity
+            style={styles.captureBox}
+            activeOpacity={0.85}
+            onPress={takeCodPaymentPhoto}
+            disabled={loading}
+          >
+            {codPaymentUri ? (
+              <Image source={{ uri: codPaymentUri }} style={styles.codPreview} />
+            ) : (
+              <View style={styles.placeholderWrap}>
+                <Ionicons
+                  name="cash-outline"
+                  size={40}
+                  color={Colors.gray400}
+                />
+                <Text style={styles.placeholderTitle}>
+                  Capture payment receipt
+                </Text>
+                <Text style={styles.placeholderSubTitle}>
+                  Photo showing cash handed over, signed receipt, or other proof
+                  the customer paid.
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.retakeButton}
+            activeOpacity={0.85}
+            disabled={loading}
+            onPress={takeCodPaymentPhoto}
+          >
+            <Ionicons
+              name="refresh-outline"
+              size={16}
+              color={Colors.primary700}
+            />
+            <Text style={styles.retakeText}>
+              {codPaymentUri ? "Retake payment proof" : "Open camera"}
+            </Text>
+          </TouchableOpacity>
+
+          {codPaymentUri ? (
+            <TouchableOpacity
+              style={styles.clearButton}
+              activeOpacity={0.85}
+              disabled={loading}
+              onPress={() => setCodPaymentUri(null)}
+            >
+              <Ionicons name="trash-outline" size={16} color={Colors.error} />
+              <Text style={styles.clearButtonText}>Remove payment proof</Text>
+            </TouchableOpacity>
+          ) : null}
+        </>
       ) : null}
 
       <TouchableOpacity
         style={[
           styles.submitButton,
-          (!imageUris.length || loading) && styles.submitButtonDisabled,
+          ((!imageUris.length ||
+            (needsCodReceipt && !codPaymentUri)) ||
+            loading) &&
+            styles.submitButtonDisabled,
         ]}
         activeOpacity={0.85}
-        disabled={!imageUris.length || loading}
+        disabled={
+          !imageUris.length ||
+          (needsCodReceipt && !codPaymentUri) ||
+          loading
+        }
         onPress={handleSubmit}
       >
         {loading ? (
@@ -394,6 +767,16 @@ const styles = StyleSheet.create({
     height: 140,
     borderRadius: BorderRadius.md,
   },
+  codPreview: {
+    width: "92%",
+    height: 220,
+    marginVertical: 12,
+    borderRadius: BorderRadius.md,
+    alignSelf: "center",
+  },
+  requiredMark: {
+    color: Colors.error,
+  },
   placeholderWrap: {
     alignItems: "center",
     paddingHorizontal: Spacing.lg,
@@ -451,6 +834,100 @@ const styles = StyleSheet.create({
     color: Colors.gray800,
     fontSize: Typography.base,
     textAlignVertical: "top",
+  },
+  damagedBlock: {
+    marginTop: Spacing.lg,
+    gap: 10,
+  },
+  damagedRow: {
+    backgroundColor: Colors.white,
+    borderWidth: 1,
+    borderColor: Colors.gray200,
+    borderRadius: BorderRadius.md,
+    padding: 12,
+    gap: 10,
+  },
+  damagedSelectBtn: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  damagedInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  damagedName: {
+    color: Colors.gray800,
+    fontSize: Typography.base,
+    fontWeight: "700",
+  },
+  damagedMeta: {
+    color: Colors.gray500,
+    fontSize: Typography.xs,
+    lineHeight: 16,
+  },
+  damagedControls: {
+    gap: 10,
+  },
+  qtyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  qtyLabel: {
+    color: Colors.gray700,
+    fontSize: Typography.sm,
+    fontWeight: "700",
+  },
+  qtyInput: {
+    width: 88,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.gray300,
+    backgroundColor: Colors.white,
+    paddingHorizontal: 12,
+    color: Colors.gray800,
+    fontSize: Typography.base,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  qtyInputDisabled: {
+    opacity: 0.45,
+  },
+  itemReasonWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  itemReasonChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: Colors.white,
+    borderWidth: 1,
+    borderColor: Colors.gray300,
+  },
+  itemReasonChipActive: {
+    backgroundColor: "#DBEAFE",
+    borderColor: "#93C5FD",
+  },
+  itemReasonChipDisabled: {
+    opacity: 0.45,
+  },
+  itemReasonText: {
+    color: Colors.gray700,
+    fontSize: Typography.xs,
+    fontWeight: "700",
+  },
+  itemReasonTextActive: {
+    color: "#1D4ED8",
+  },
+  damagedEmpty: {
+    color: Colors.gray600,
+    fontSize: Typography.base,
+    lineHeight: 20,
   },
   submitButton: {
     marginTop: "auto",

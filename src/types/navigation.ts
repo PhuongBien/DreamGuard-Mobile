@@ -44,6 +44,8 @@ export type TaskStackParamList = {
 
   TaskDetail: {
     taskId?: string;
+    /** Internal: bump to force remount/refresh when taskId stays the same */
+    refreshKey?: number;
     shippingTaskId?: string;
     tradeInOrderId?: string;
     orderId?: string;
@@ -57,7 +59,7 @@ export type TaskStackParamList = {
 
   PhotoUpload: {
     shippingTaskId: string;
-    photoType: "before" | "after";
+    photoType: "before" | "after" | "payment";
   };
 
   DeliveryPhotoCapture: {
@@ -66,6 +68,8 @@ export type TaskStackParamList = {
     /** Use trade-in shipping APIs + Cloudinary upload without TaskContext */
     tradeInFlow?: boolean;
     tradeInOrderId?: string;
+    /** Service-order COD: second proof photo for PaymentEvidenceUrl */
+    requiresCodPaymentEvidence?: boolean;
   };
 
   CheckInOut: {

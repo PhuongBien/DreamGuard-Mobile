@@ -24,6 +24,16 @@ const normalizeTradeInOrder = (raw: any): TradeInOrder => {
     address: raw.customer?.address || raw.deliveryAddress || raw.address || "",
     description: raw.description || raw.notes || raw.staffNotes,
     tradeInPrice: raw.tradeInPrice,
+    minTradeInPrice:
+      raw.minTradeInPrice ??
+      raw.mintradeInPrice ??
+      raw.min_trade_in_price ??
+      undefined,
+    maxTradeInPrice:
+      raw.maxTradeInPrice ??
+      raw.maxtradeInPrice ??
+      raw.max_trade_in_price ??
+      undefined,
     amountToPay: raw.amountToPay,
     depositAmount: raw.depositAmount,
     isGood: typeof raw.isGood === "boolean" ? raw.isGood : undefined,

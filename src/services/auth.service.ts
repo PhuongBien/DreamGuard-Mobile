@@ -13,7 +13,9 @@ import {
 
 const isGuid = (value?: string) =>
   !!value &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 
 const parseJwtPayload = (token: string): Record<string, any> | null => {
   try {
@@ -21,7 +23,10 @@ const parseJwtPayload = (token: string): Record<string, any> | null => {
     if (parts.length < 2) return null;
 
     const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const padded = base64.padEnd(
+      base64.length + ((4 - (base64.length % 4)) % 4),
+      "=",
+    );
     const decoded = atob(padded);
     return JSON.parse(decoded);
   } catch {
@@ -29,11 +34,15 @@ const parseJwtPayload = (token: string): Record<string, any> | null => {
   }
 };
 
-const getUserIdFromClaims = (claims: Record<string, any> | null): string | null => {
+const getUserIdFromClaims = (
+  claims: Record<string, any> | null,
+): string | null => {
   if (!claims) return null;
 
   const candidates = [
-    claims["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"],
+    claims[
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"
+    ],
     claims["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"],
     claims["http://schemas.microsoft.com/identity/claims/objectidentifier"],
     claims.staffId,
@@ -69,7 +78,7 @@ const normalizeRole = (rawRole?: string): User["role"] => {
 const getPreferredName = (
   payloadUser: Record<string, any> | undefined,
   payload: Record<string, any>,
-  fallbackPhone: string
+  fallbackPhone: string,
 ) => {
   const candidates = [
     payloadUser?.fullName,
@@ -83,7 +92,7 @@ const getPreferredName = (
   ];
 
   const resolved = candidates.find(
-    (value) => typeof value === "string" && value.trim().length > 0
+    (value) => typeof value === "string" && value.trim().length > 0,
   ) as string | undefined;
 
   return resolved?.trim() || fallbackPhone;
@@ -147,8 +156,7 @@ const toNormalizedUserFromStaff = (
     address: toOptionalString(input.address) || fallback.address,
     position: toOptionalString(input.position) || fallback.position,
     department: toOptionalString(input.department) || fallback.department,
-    employeeCode:
-      toOptionalString(input.employeeCode) || fallback.employeeCode,
+    employeeCode: toOptionalString(input.employeeCode) || fallback.employeeCode,
     avatarUrl: toNullableString(input.avatarUrl) ?? fallback.avatarUrl,
   };
 };
@@ -177,22 +185,37 @@ const pickStaffCandidates = (payload: any): Record<string, any>[] => {
   return [payload as Record<string, any>];
 };
 
-const findMatchingStaff = (staffs: Record<string, any>[], currentUser: User) => {
+const findMatchingStaff = (
+  staffs: Record<string, any>[],
+  currentUser: User,
+) => {
   const currentId = currentUser.id?.toLowerCase?.() || "";
   const currentUserId = currentUser.userId?.toLowerCase?.() || "";
-  const currentPhone = (currentUser.phone || currentUser.phoneNumber || "").toLowerCase();
+  const currentPhone = (
+    currentUser.phone ||
+    currentUser.phoneNumber ||
+    ""
+  ).toLowerCase();
   const currentEmployeeCode = (currentUser.employeeCode || "").toLowerCase();
 
   return staffs.find((staff) => {
-    const staffId =
-      (toOptionalString(staff.staffId) ||
-        toOptionalString(staff.id) ||
-        toOptionalString(staff.userId) || "").toLowerCase();
-    const staffPhone =
-      (toOptionalString(staff.phoneNumber) || toOptionalString(staff.phone) || "").toLowerCase();
-    const staffEmployeeCode = (toOptionalString(staff.employeeCode) || "").toLowerCase();
+    const staffId = (
+      toOptionalString(staff.staffId) ||
+      toOptionalString(staff.id) ||
+      toOptionalString(staff.userId) ||
+      ""
+    ).toLowerCase();
+    const staffPhone = (
+      toOptionalString(staff.phoneNumber) ||
+      toOptionalString(staff.phone) ||
+      ""
+    ).toLowerCase();
+    const staffEmployeeCode = (
+      toOptionalString(staff.employeeCode) || ""
+    ).toLowerCase();
 
-    if (staffId && (staffId === currentId || staffId === currentUserId)) return true;
+    if (staffId && (staffId === currentId || staffId === currentUserId))
+      return true;
     if (staffPhone && currentPhone && staffPhone === currentPhone) return true;
     if (
       staffEmployeeCode &&
@@ -207,7 +230,7 @@ const findMatchingStaff = (staffs: Record<string, any>[], currentUser: User) => 
 
 export const loginService = async (
   phoneNumber: string,
-  password: string
+  password: string,
 ): Promise<{ token: string; refreshToken: string; user: User }> => {
   const response = await authLogin({ phoneNumber, password });
 
@@ -218,7 +241,11 @@ export const loginService = async (
   const payload = (response.data || {}) as Record<string, any>;
 
   const token = (payload.accessToken || payload.token || "").trim();
-  const refreshToken = (payload.refreshToken || payload.refresh_token || "").trim();
+  const refreshToken = (
+    payload.refreshToken ||
+    payload.refresh_token ||
+    ""
+  ).trim();
 
   if (!token) {
     throw new Error("Login response missing token");
@@ -241,7 +268,7 @@ export const loginService = async (
   ];
 
   const payloadUserId = payloadUserIdCandidates.find(
-    (value) => typeof value === "string" && value.trim()
+    (value) => typeof value === "string" && value.trim(),
   ) as string | undefined;
 
   const resolvedUserId =
@@ -273,7 +300,7 @@ export const loginService = async (
     role: normalizeRole(
       (payloadUser?.role as string | undefined) ||
         (payloadUser?.position as string | undefined) ||
-        (payload.roleName as string | undefined)
+        (payload.roleName as string | undefined),
     ),
     backendRole:
       (payloadUser?.role as string | undefined) ||
@@ -324,30 +351,6 @@ export const loginService = async (
   };
 };
 
-// export const forgotPasswordService = async (phoneNumber: string) => {
-//   const response = await authForgotPassword({ phoneNumber });
-
-//   if (!response.success) {
-//     throw new Error(response.message || "Forgot password request failed");
-//   }
-
-//   return response.data;
-// };
-
-// export const resetPasswordService = async (
-//   phoneNumber: string,
-//   otpCode: string,
-//   newPassword: string
-// ) => {
-//   const response = await authResetPassword({ phoneNumber, otpCode, newPassword });
-
-//   if (!response.success) {
-//     throw new Error(response.message || "Reset password failed");
-//   }
-
-//   return response.data;
-// };
-
 export const logoutService = async () => {
   const response = await authLogout();
 
@@ -358,7 +361,9 @@ export const logoutService = async () => {
   return response.data;
 };
 
-export const getStaffProfileService = async (currentUser: User): Promise<User> => {
+export const getStaffProfileService = async (
+  currentUser: User,
+): Promise<User> => {
   try {
     const profileResponse = await fetchStaffProfile();
 
@@ -385,5 +390,7 @@ export const getStaffProfileService = async (currentUser: User): Promise<User> =
   if (!candidates.length) return currentUser;
 
   const matched = findMatchingStaff(candidates, currentUser);
-  return matched ? toNormalizedUserFromStaff(matched, currentUser) : currentUser;
+  return matched
+    ? toNormalizedUserFromStaff(matched, currentUser)
+    : currentUser;
 };

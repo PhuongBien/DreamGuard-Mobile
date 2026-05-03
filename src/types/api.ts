@@ -28,6 +28,9 @@ export interface StaffProfile {
   email?: string;
   averageRating?: number;
   totalRating?: number;
+  // GetAll staff for service assignment may include number of
+  // not-completed service tasks used for sorting.
+  TaskCount?: number;
 }
 
 export interface VariantDetail {

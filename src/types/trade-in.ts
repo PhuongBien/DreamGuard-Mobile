@@ -78,6 +78,8 @@ export interface TradeInOrder {
   description?: string;
 
   tradeInPrice?: number;
+  minTradeInPrice?: number;
+  maxTradeInPrice?: number;
   amountToPay?: number;
   depositAmount?: number;
   isGood?: boolean;

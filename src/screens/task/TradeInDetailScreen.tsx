@@ -675,6 +675,50 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
   const heroTitleText =
     order.orderItem?.itemName?.trim() || `Trade-in · ${order.orderCode}`;
 
+  const unitPrice = order.orderItem?.unitPrice;
+  const salePrice = order.productVariant?.salePrice;
+  const depositAmount = order.depositAmount;
+
+  const maxTradeInPriceByUnitMinusDeposit =
+    unitPrice != null && depositAmount != null ? unitPrice - depositAmount : undefined;
+
+  // Range rule:
+  // - tradeInPrice in [minTradeInPrice, unitPrice - deposit]
+  // - also ensure unitPrice <= salePrice so amountToPay (at max) won't go negative.
+  const allowedMinTradeInPriceRaw = order.minTradeInPrice ?? 0;
+  const allowedMaxTradeInPrice =
+    unitPrice != null && depositAmount != null && salePrice != null
+      ? unitPrice <= salePrice
+        ? maxTradeInPriceByUnitMinusDeposit
+        : salePrice - depositAmount
+      : maxTradeInPriceByUnitMinusDeposit ?? order.maxTradeInPrice;
+
+  // Defensive: ensure min <= max to avoid producing negative balance.
+  const effectiveAllowedMinTradeInPrice =
+    allowedMaxTradeInPrice != null
+      ? Math.min(allowedMinTradeInPriceRaw, allowedMaxTradeInPrice)
+      : allowedMinTradeInPriceRaw;
+
+  const tradeInPriceForBalance =
+    order.tradeInPrice != null && allowedMaxTradeInPrice != null
+      ? Math.max(
+          effectiveAllowedMinTradeInPrice,
+          Math.min(allowedMaxTradeInPrice, order.tradeInPrice),
+        )
+      : order.tradeInPrice;
+
+  const computedAmountToPay =
+    salePrice != null &&
+    depositAmount != null &&
+    tradeInPriceForBalance != null
+      ? salePrice - depositAmount - tradeInPriceForBalance
+      : undefined;
+  const amountToPayForDisplay =
+    computedAmountToPay != null ? Math.max(0, computedAmountToPay) : order.amountToPay;
+
+  const maxTradeInPriceForConfirm =
+    allowedMaxTradeInPrice != null ? Math.max(0, allowedMaxTradeInPrice) : undefined;
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
@@ -898,7 +942,7 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
           order.isGood !== undefined) ? (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>PRICING & BALANCE</Text>
-            {order.tradeInPrice != null ? (
+            {tradeInPriceForBalance != null ? (
               <View style={styles.infoRow}>
                 <Ionicons
                   name="trending-down-outline"
@@ -906,7 +950,35 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
                   color={Colors.primary500}
                 />
                 <Text style={styles.infoText}>
-                  Trade-in credit: {formatVnd(order.tradeInPrice)}
+                  Trade-in credit: {formatVnd(tradeInPriceForBalance)}
+                </Text>
+              </View>
+            ) : null}
+
+            {allowedMaxTradeInPrice != null ? (
+              <View style={styles.infoRow}>
+                <Ionicons
+                  name="swap-horizontal-outline"
+                  size={18}
+                  color={Colors.primary500}
+                />
+                <Text style={styles.infoText}>
+                  Allowed trade-in:{" "}
+                  {formatVnd(effectiveAllowedMinTradeInPrice)} →{" "}
+                  {formatVnd(allowedMaxTradeInPrice)}
+                </Text>
+              </View>
+            ) : null}
+
+            {maxTradeInPriceForConfirm != null ? (
+              <View style={styles.infoRow}>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={18}
+                  color={Colors.primary500}
+                />
+                <Text style={styles.infoText}>
+                  Max confirm: {formatVnd(maxTradeInPriceForConfirm)}
                 </Text>
               </View>
             ) : null}
@@ -922,7 +994,7 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
                 </Text>
               </View>
             ) : null}
-            {order.amountToPay != null ? (
+            {amountToPayForDisplay != null ? (
               <View style={styles.infoRow}>
                 <Ionicons
                   name="card-outline"
@@ -930,7 +1002,7 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
                   color={Colors.primary500}
                 />
                 <Text style={styles.infoText}>
-                  Amount to pay (COD / balance): {formatVnd(order.amountToPay)}
+                  Amount to pay (COD / balance): {formatVnd(amountToPayForDisplay)}
                 </Text>
               </View>
             ) : null}

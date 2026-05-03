@@ -35,6 +35,9 @@
       "predictiveBackGestureEnabled": false,
       "package": "com.phuongbtt.dreamguardmobilenew"
     },
+    "plugins": [
+      "./plugins/withDisableFlagSecure"
+    ],
     "web": {
       "favicon": "./assets/favicon.png"
     }
