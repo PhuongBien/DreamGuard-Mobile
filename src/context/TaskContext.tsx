@@ -13,6 +13,10 @@ import { TaskService } from "../services/task.service";
 import { DeliveryTaskService } from "../services/delivery-task.service";
 import { useAuth } from "./AuthContext";
 import { uploadImageToCloudinary } from "../utils/cloudinary";
+import {
+  hydrateTaskPhotosWithPersistedUploadedAt,
+  persistTaskPhotoUploadedAt,
+} from "../utils/taskPhotoUploadedAt";
 
 const isGuid = (value?: string) =>
   !!value &&
@@ -33,6 +37,9 @@ const mapStatus = (status: string): TaskStatus => {
       return "checked_out";
     case "Completed":
       return "completed";
+    case "Reschedule":
+    case "Rescheduled":
+      return "reschedule";
     case "Cancelled":
     case "ForcedCancelled": // 🔥 thêm dòng này
       return "cancelled";
@@ -88,18 +95,24 @@ export interface TaskContextType {
     note?: string,
   ) => Promise<void>;
   startProcessing: (taskId: string) => Promise<void>;
-  completeTask: (taskId: string) => Promise<void>;
+  completeTask: (taskId: string, payload?: { evidenceUrl?: string }) => Promise<void>;
   forcedCancel: (
     taskId: string,
     payload?: { staffNote?: string },
   ) => Promise<void>;
   startDelivery: (taskId: string, evidenceUrls?: string[]) => Promise<void>;
   markArrived: (taskId: string) => Promise<void>;
-  markDelivered: (taskId: string, evidenceUrls: string[]) => Promise<void>;
+  markDelivered: (
+    taskId: string,
+    evidenceUrls: string[],
+    options?: { paymentEvidenceUrl?: string },
+  ) => Promise<void>;
   markReturned: (
     taskId: string,
-    reason: string,
-    evidenceUrls: string[],
+    payload:
+      | { reason: string; evidenceUrls: string[]; damagedItems?: any[] }
+      | string,
+    evidenceUrls?: string[],
   ) => Promise<void>;
 }
 
@@ -320,14 +333,15 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
           data.map(async (task) => {
             const detail = await TaskService.getTaskById(task.id);
 
-            if (detail) {
-              return {
-                ...task,
-                ...detail,
-              };
+            if (!detail) {
+              return task;
             }
 
-            return task;
+            const hydrated = await hydrateTaskPhotosWithPersistedUploadedAt(detail);
+            return {
+              ...task,
+              ...hydrated,
+            };
           }),
         );
 
@@ -360,19 +374,36 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
     refreshTasks();
   }, [authScopeKey]);
 
-  const updateLocalTask = (updated: Task) => {
-    if (!isOwnedTask(updated)) {
-      setTasksState((prev) => prev.filter((task) => task.id !== updated.id));
+  const updateLocalTask = (
+    updated: Task,
+    opts?: { skipHydratePhotos?: boolean },
+  ) => {
+    const apply = (next: Task) => {
+      if (!isOwnedTask(next)) {
+        setTasksState((prev) => prev.filter((task) => task.id !== next.id));
+        return;
+      }
+
+      setTasksState((prev) => {
+        const exists = prev.some((t) => t.id === next.id);
+        if (!exists) {
+          return [next, ...prev];
+        }
+
+        return prev.map((t) => (t.id === next.id ? next : t));
+      });
+    };
+
+    const shouldHydrate =
+      !opts?.skipHydratePhotos && (updated.photos?.length ?? 0) > 0;
+
+    if (!shouldHydrate) {
+      apply(updated);
       return;
     }
 
-    setTasksState((prev) => {
-      const exists = prev.some((t) => t.id === updated.id);
-      if (!exists) {
-        return [updated, ...prev];
-      }
-
-      return prev.map((t) => (t.id === updated.id ? updated : t));
+    void hydrateTaskPhotosWithPersistedUploadedAt(updated).then((enriched) => {
+      apply(enriched);
     });
   };
 
@@ -404,19 +435,21 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
         return undefined;
       }
 
-      if (task && isOwnedTask(task)) {
+      if (mappedTask && isOwnedTask(mappedTask)) {
+        const hydrated = await hydrateTaskPhotosWithPersistedUploadedAt(mappedTask);
+
         const mergedTask: Task = existing
           ? {
-              ...task,
-              photos: mergePhotos(existing.photos || [], task.photos || []),
+              ...hydrated,
+              photos: mergePhotos(existing.photos || [], hydrated.photos || []),
               relatedImageUrls: mergeImageUrls(
                 existing.relatedImageUrls || [],
-                task.relatedImageUrls || [],
+                hydrated.relatedImageUrls || [],
               ),
             }
-          : task;
+          : hydrated;
 
-        updateLocalTask(mergedTask);
+        updateLocalTask(mergedTask, { skipHydratePhotos: true });
         return mergedTask;
       }
 
@@ -431,19 +464,20 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
     }
 
     if (task && isOwnedTask(task)) {
-      // Keep optimistic local photos when backend is eventually consistent.
+      const hydrated = await hydrateTaskPhotosWithPersistedUploadedAt(task);
+
       const mergedTask: Task = existing
         ? {
-            ...task,
-            photos: mergePhotos(existing.photos || [], task.photos || []),
+            ...hydrated,
+            photos: mergePhotos(existing.photos || [], hydrated.photos || []),
             relatedImageUrls: mergeImageUrls(
               existing.relatedImageUrls || [],
-              task.relatedImageUrls || [],
+              hydrated.relatedImageUrls || [],
             ),
           }
-        : task;
+        : hydrated;
 
-      updateLocalTask(mergedTask);
+      updateLocalTask(mergedTask, { skipHydratePhotos: true });
       return mergedTask;
     }
 
@@ -524,17 +558,26 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
         url: uploadedUrl,
       };
 
-      updateLocalTask({
-        ...existing,
-        photos: mergePhotos(
-          [uploadedPhoto, ...(existing.photos || [])],
-          existing.photos || [],
-        ),
-        relatedImageUrls: mergeImageUrls(
-          [uploadedUrl, ...(existing.relatedImageUrls || [])],
-          existing.relatedImageUrls || [],
-        ),
-      });
+      await persistTaskPhotoUploadedAt(
+        existing.id,
+        uploadedUrl,
+        uploadedPhoto.uploadedAt,
+      );
+
+      updateLocalTask(
+        {
+          ...existing,
+          photos: mergePhotos(
+            [uploadedPhoto, ...(existing.photos || [])],
+            existing.photos || [],
+          ),
+          relatedImageUrls: mergeImageUrls(
+            [uploadedUrl, ...(existing.relatedImageUrls || [])],
+            existing.relatedImageUrls || [],
+          ),
+        },
+        { skipHydratePhotos: true },
+      );
       return uploadedUrl;
     }
 
@@ -562,14 +605,26 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
       captureStage: photoData.captureStage,
     };
 
-    updateLocalTask({
-      ...existing,
-      photos: mergePhotos([uploadedPhoto, ...(existing.photos || [])], existing.photos || []),
-      relatedImageUrls: mergeImageUrls(
-        [uploadedUrl, ...(existing.relatedImageUrls || [])],
-        existing.relatedImageUrls || [],
-      ),
-    });
+    await persistTaskPhotoUploadedAt(
+      existing.id,
+      uploadedUrl,
+      uploadedPhoto.uploadedAt,
+    );
+
+    updateLocalTask(
+      {
+        ...existing,
+        photos: mergePhotos(
+          [uploadedPhoto, ...(existing.photos || [])],
+          existing.photos || [],
+        ),
+        relatedImageUrls: mergeImageUrls(
+          [uploadedUrl, ...(existing.relatedImageUrls || [])],
+          existing.relatedImageUrls || [],
+        ),
+      },
+      { skipHydratePhotos: true },
+    );
 
     return uploadedUrl;
   };
@@ -639,12 +694,12 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
     updateLocalTask(updated);
   };
 
-  const completeTask = async (taskId: string) => {
+  const completeTask = async (taskId: string, payload?: { evidenceUrl?: string }) => {
     if (isDeliveryStaff) {
       throw new Error("Complete action is not used for delivery tasks");
     }
 
-    const updated = await TaskService.completeTask(taskId);
+    const updated = await TaskService.completeTask(taskId, payload);
     updateLocalTask(updated);
   };
 
@@ -687,7 +742,11 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
     );
   };
 
-  const markDelivered = async (taskId: string, evidenceUrls: string[]) => {
+  const markDelivered = async (
+    taskId: string,
+    evidenceUrls: string[],
+    _options?: { paymentEvidenceUrl?: string },
+  ) => {
     const existing = tasksRef.current.find((task) => task.id === taskId);
     const updated = await DeliveryTaskService.markDelivered(
       taskId,
@@ -709,14 +768,23 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
 
   const markReturned = async (
     taskId: string,
-    reason: string,
-    evidenceUrls: string[],
+    payload:
+      | { reason: string; evidenceUrls: string[]; damagedItems?: any[] }
+      | string,
+    evidenceUrls?: string[],
   ) => {
     const existing = tasksRef.current.find((task) => task.id === taskId);
+    const resolvedReason =
+      typeof payload === "string" ? payload : String(payload?.reason ?? "");
+    const resolvedEvidenceUrls =
+      typeof payload === "string"
+        ? evidenceUrls ?? []
+        : payload?.evidenceUrls ?? [];
+
     const updated = await DeliveryTaskService.markReturned(
       taskId,
-      reason,
-      evidenceUrls,
+      resolvedReason,
+      resolvedEvidenceUrls,
     );
     updateLocalTask(
       existing
@@ -791,11 +859,24 @@ function mergePhotos(localPhotos: TaskPhoto[], remotePhotos: TaskPhoto[]) {
       ...existing,
       captureStage: existing.captureStage || photo.captureStage,
       uploadedBy: existing.uploadedBy || photo.uploadedBy,
-      uploadedAt: existing.uploadedAt || photo.uploadedAt,
+      uploadedAt: preferLocalUploadedTimestamp(photo.uploadedAt, existing.uploadedAt),
     });
   }
 
   return Array.from(byUrl.values());
+}
+
+function preferLocalUploadedTimestamp(
+  preferred?: string,
+  fallback?: string,
+): string {
+  const p = (preferred ?? "").trim();
+  const f = (fallback ?? "").trim();
+  const pOk = !!p && !Number.isNaN(Date.parse(p));
+  const fOk = !!f && !Number.isNaN(Date.parse(f));
+  if (pOk) return new Date(p).toISOString();
+  if (fOk) return new Date(f).toISOString();
+  return "";
 }
 
 function mergeImageUrls(localUrls: string[], remoteUrls: string[]) {

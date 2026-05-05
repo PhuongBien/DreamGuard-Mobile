@@ -49,6 +49,7 @@ const TRADEIN_STATUS_LABELS: Record<TradeInUIStatus, string> = {
 
 const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
   pending: "Awaiting processing",
+  reschedule: "Reschedule",
   checked_in: "Checked In",
   in_progress: "In Progress",
   checked_out: "Checked Out",
@@ -64,6 +65,7 @@ const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
 
 const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string }> = {
   pending: { bg: "#F8B84A", text: "#1E293B" },
+  reschedule: { bg: "#DDD6FE", text: "#5B21B6" },
   checked_in: { bg: "#A3C4F3", text: "#1A3A6C" },
   in_progress: { bg: "#79A8E8", text: Colors.white },
   checked_out: { bg: "#A7D4FF", text: "#0F2854" },

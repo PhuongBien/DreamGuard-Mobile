@@ -10,6 +10,19 @@ export function parseDate(input?: string | Date | null): Date | null {
   return isNaN(date.getTime()) ? null : date;
 }
 
+/** ISO UTC or empty — never substitutes the current instant for missing/invalid timestamps. */
+export function toIsoUtcOrEmpty(value?: unknown): string {
+  if (value === null || value === undefined) return "";
+
+  const s = typeof value === "string" ? value.trim() : String(value).trim();
+  if (!s) return "";
+
+  const date = parseDate(s);
+  if (!date) return "";
+
+  return date.toISOString();
+}
+
 /**
  * Format date to DD/MM/YYYY
  */

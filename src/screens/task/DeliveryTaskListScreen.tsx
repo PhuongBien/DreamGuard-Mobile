@@ -29,6 +29,7 @@ type Props = NativeStackScreenProps<TaskStackParamList, "TaskList">;
 
 const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
   pending: "Awaiting processing",
+  reschedule: "Reschedule",
   delivering: "Delivering",
   arrived: "Arrived",
   delivered: "Delivered",
@@ -44,6 +45,7 @@ const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
 
 const STATUS_BADGES: Record<TaskStatus, { bg: string; text: string }> = {
   pending: { bg: "#FDECC8", text: "#CC8A06" },
+  reschedule: { bg: "#EDE9FE", text: "#6D28D9" },
   checked_in: { bg: "#DBE9FA", text: "#1A5294" },
   in_progress: { bg: "#DCE9FA", text: "#4D79B8" },
   checked_out: { bg: "#D8EEF9", text: "#2F7D9F" },
@@ -84,6 +86,7 @@ const SUB_FILTERS: Record<
 const GROUP_STATUS_MAP: Record<MainFilter, TaskStatus[]> = {
   all: [
     "pending",
+    "reschedule",
     "delivering",
     "arrived",
     "delivered",

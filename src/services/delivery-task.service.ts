@@ -17,6 +17,7 @@ import {
   processExchangeForTradeIn,
 } from "../utils/api";
 import { uploadImageToCloudinary } from "../utils/cloudinary";
+import { toIsoUtcOrEmpty } from "../utils/date";
 
 const isRecord = (value: unknown): value is Record<string, any> =>
   typeof value === "object" && value !== null;
@@ -264,7 +265,12 @@ const normalizePhotos = (taskId: string, payload: Record<string, any>) => {
         ),
         url,
         type: "evidence",
-        uploadedAt: toIso((item as any)?.createdAt ?? new Date().toISOString()),
+        uploadedAt:
+          typeof item === "string"
+            ? ""
+            : toIsoUtcOrEmpty(
+                (item as any)?.createdAt ?? (item as any)?.uploadedAt,
+              ),
         uploadedBy: pickAssignedStaffId(payload),
         captureStage:
           (item as any)?.captureStage ??

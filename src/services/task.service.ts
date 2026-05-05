@@ -17,10 +17,12 @@ import {
   updateTaskCheckedInStatusWithEvidence,
   updateTaskProcessingStatus,
   updateTaskCheckedOutStatus,
+  updateTaskCompletedStatus,
   updateTaskForcedCancelledStatus,
   addTaskNote as apiAddTaskNote,
   uploadTaskPhoto as apiUploadTaskPhoto,
 } from "../utils/api";
+import { toIsoUtcOrEmpty } from "../utils/date";
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -177,6 +179,13 @@ const normalizeStatus = (value: unknown): TaskStatus => {
   if (raw === "onhold") return "on_hold";
 
   if (raw === "checkedin") return "checked_in";
+  if (
+    raw === "reschedule" ||
+    raw === "rescheduled" ||
+    raw.includes("reschedule")
+  ) {
+    return "reschedule";
+  }
   if (raw === "inprogress" || raw === "processing") return "in_progress";
   if (raw === "checkedout") return "checked_out";
   if (raw === "completed") return "completed";
@@ -269,7 +278,7 @@ const inferPhotoType = (
   item: unknown,
   url: string,
   index: number,
-): "before" | "after" | "evidence" => {
+): "before" | "after" | "payment" | "evidence" => {
   const source = isRecord(item) ? item : {};
   const hint = String(
     source.type ??
@@ -283,6 +292,16 @@ const inferPhotoType = (
     .trim();
 
   const combinedHint = `${hint} ${url}`.toLowerCase();
+
+  if (
+    combinedHint.includes("payment") ||
+    combinedHint.includes("cod") ||
+    combinedHint.includes("receipt") ||
+    combinedHint.includes("thanhtoan") ||
+    combinedHint.includes("thanh toan")
+  ) {
+    return "payment";
+  }
 
   if (
     combinedHint.includes("before") ||
@@ -300,8 +319,6 @@ const inferPhotoType = (
     return "after";
   }
 
-  if (index === 0) return "before";
-  if (index === 1) return "after";
   return "evidence";
 };
 
@@ -331,9 +348,10 @@ const normalizePhotoList = (
         ),
         url,
         type: inferPhotoType(item, url, index),
-        uploadedAt: toIso(
-          item?.createdAt ?? item?.uploadedAt ?? new Date().toISOString(),
-        ),
+        uploadedAt:
+          typeof item === "string"
+            ? ""
+            : toIsoUtcOrEmpty(item?.createdAt ?? item?.uploadedAt),
         uploadedBy: String(item?.uploadedBy ?? fallbackUploadedBy ?? ""),
       } as TaskPhoto;
     })
@@ -437,23 +455,41 @@ const normalizeTask = (input: unknown): Task => {
         : null;
 
   // ── Photos from serviceOrderImageUrl and evidence arrays ──────────────────
+  const tagUrls = (
+    items: unknown,
+    type: "before" | "after" | "evidence",
+  ): unknown[] => {
+    if (!Array.isArray(items)) return [];
+    return items.map((entry) => {
+      if (typeof entry === "string") {
+        const url = entry.trim();
+        return url ? { url, type } : null;
+      }
+      // Keep backend objects intact (they may already include type/description).
+      return entry;
+    }).filter(Boolean);
+  };
+
   const rawPhotoItems: unknown[] = [
-    ...(Array.isArray(raw.serviceOrderImageUrl) ? raw.serviceOrderImageUrl : []),
+    // Common backend field: array of image URLs captured at check-in.
+    ...tagUrls(raw.serviceOrderImageUrl, "before"),
+
+    // Evidence lists can contain rich objects with type/description from upload endpoint.
     ...(Array.isArray(raw.serviceEvidences) ? raw.serviceEvidences : []),
     ...(Array.isArray(raw.evidences) ? raw.evidences : []),
-    ...(Array.isArray(raw.checkOutImages) ? raw.checkOutImages : []),
-    ...(Array.isArray(raw.checkoutImages) ? raw.checkoutImages : []),
-    ...(Array.isArray(raw.checkOutImageUrls) ? raw.checkOutImageUrls : []),
-    ...(Array.isArray(raw.checkoutImageUrls) ? raw.checkoutImageUrls : []),
-    ...(Array.isArray(raw.afterImages) ? raw.afterImages : []),
-    ...(Array.isArray(raw.afterImageUrls) ? raw.afterImageUrls : []),
-    ...(Array.isArray(checkOutPayload.images) ? checkOutPayload.images : []),
-    ...(Array.isArray(checkOutPayload.evidences)
-      ? checkOutPayload.evidences
-      : []),
-    ...(Array.isArray(checkOutPayload.imageUrls)
-      ? checkOutPayload.imageUrls
-      : []),
+
+    // Common backend fields: checkout / after images.
+    ...tagUrls(raw.checkOutImages, "after"),
+    ...tagUrls(raw.checkoutImages, "after"),
+    ...tagUrls(raw.checkOutImageUrls, "after"),
+    ...tagUrls(raw.checkoutImageUrls, "after"),
+    ...tagUrls(raw.afterImages, "after"),
+    ...tagUrls(raw.afterImageUrls, "after"),
+
+    // Nested checkout payloads (arrays of urls or objects).
+    ...tagUrls(checkOutPayload.images, "after"),
+    ...(Array.isArray(checkOutPayload.evidences) ? checkOutPayload.evidences : []),
+    ...tagUrls(checkOutPayload.imageUrls, "after"),
     ...(Array.isArray(checkOutPayload.photos) ? checkOutPayload.photos : []),
     ...(Array.isArray(checkOutPayload.files) ? checkOutPayload.files : []),
   ];
@@ -465,7 +501,16 @@ const normalizeTask = (input: unknown): Task => {
     checkOutPayload.imageUrl,
     checkOutPayload.photoUrl,
     checkOutPayload.fileUrl,
-  ].filter((item) => !!item);
+  ]
+    .filter((item) => !!item)
+    .map((entry) => {
+      if (typeof entry === "string") {
+        const url = entry.trim();
+        return url ? { url, type: "after" as const } : null;
+      }
+      return entry;
+    })
+    .filter(Boolean);
 
   const photos = normalizePhotoList(
     [...rawPhotoItems, ...rawSinglePhotoItems],
@@ -473,7 +518,7 @@ const normalizeTask = (input: unknown): Task => {
     String(raw.staffId ?? ""),
   ).map((photo) => ({
     ...photo,
-    uploadedAt: toIso(photo.uploadedAt, nowIso),
+    uploadedAt: toIsoUtcOrEmpty(photo.uploadedAt),
   }));
 
   // ── Products from serviceOrderItems (prefer API itemName / name per line) ─
@@ -508,6 +553,20 @@ const normalizeTask = (input: unknown): Task => {
           ]
         : [];
 
+  const rescheduleAwaitingNewTaskNormalized =
+    raw.rescheduleAwaitingNewTask === true ||
+    raw.RescheduleAwaitingNewTask === true ||
+    String(
+      raw.rescheduleAwaitingNewTask ?? raw.RescheduleAwaitingNewTask ?? "",
+    )
+      .trim()
+      .toLowerCase() === "true";
+
+  let statusNormalized = normalizeStatus(raw.status ?? raw.taskStatus);
+  if (rescheduleAwaitingNewTaskNormalized) {
+    statusNormalized = "reschedule";
+  }
+
   return {
     id: taskId,
     taskCode: raw.soId
@@ -516,7 +575,7 @@ const normalizeTask = (input: unknown): Task => {
     title,
     description: String(raw.staffNote ?? raw.description ?? raw.note ?? ""),
     type: inferTaskType(servicePackageName || productTypeName) || "cleaning",
-    status: normalizeStatus(raw.status ?? raw.taskStatus),
+    status: statusNormalized,
     priority: "medium",
     assignedTo: pickAssignedStaffId(raw),
     assignedToName: pickAssignedStaffName(raw),
@@ -580,6 +639,13 @@ const normalizeTask = (input: unknown): Task => {
           }
         : undefined,
     },
+    isRescheduledAppointment:
+      raw.isRescheduledAppointment === true ||
+      raw.IsRescheduledAppointment === true ||
+      String(raw.isRescheduledAppointment ?? raw.IsRescheduledAppointment ?? "")
+        .trim()
+        .toLowerCase() === "true",
+    rescheduleAwaitingNewTask: rescheduleAwaitingNewTaskNormalized,
     isSynced: true,
   };
 };
@@ -1054,6 +1120,20 @@ export const TaskService = {
       return current;
     }
 
+    // Some backends require processing before allowing forced cancel.
+    const hasCheckedIn = !!current.checkInOut?.checkIn;
+    const hasCheckedOut = !!current.checkInOut?.checkOut;
+    const effectiveStatus: TaskStatus =
+      current.status === "pending" && hasCheckedIn
+        ? "checked_in"
+        : current.status === "in_progress" && hasCheckedOut
+          ? "checked_out"
+          : current.status;
+
+    if (effectiveStatus === "checked_in") {
+      await updateTaskProcessingStatus(taskId);
+    }
+
     await updateTaskForcedCancelledStatus(taskId, payload);
     const refreshed = await this.getTaskById(taskId);
     if (!refreshed) throw new Error("Task not found after forced cancel");
@@ -1062,9 +1142,11 @@ export const TaskService = {
 
   // ================= COMPLETE TASK =================
 
-  async completeTask(taskId: string): Promise<Task> {
+  async completeTask(taskId: string, payload?: { evidenceUrl?: string }): Promise<Task> {
     // CheckedOut → Completed
-    await apiUpdateTaskStatus(taskId, "completed");
+    await updateTaskCompletedStatus(taskId, {
+      evidenceUrl: payload?.evidenceUrl ?? "",
+    });
     const refreshed = await this.getTaskById(taskId);
     if (!refreshed) throw new Error("Task not found after complete");
     return refreshed;

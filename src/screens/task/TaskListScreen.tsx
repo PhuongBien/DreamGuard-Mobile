@@ -32,6 +32,7 @@ type Props = NativeStackScreenProps<TaskStackParamList, "TaskList">;
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   pending: "Awaiting processing",
+  reschedule: "Reschedule",
   checked_in: "Checked In",
   in_progress: "In Progress",
   checked_out: "Checked Out",
@@ -47,6 +48,7 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
 
 const STATUS_BADGES: Record<TaskStatus, { bg: string; text: string }> = {
   pending: { bg: "#FDECC8", text: "#CC8A06" },
+  reschedule: { bg: "#EDE9FE", text: "#6D28D9" },
   checked_in: { bg: "#DBE9FA", text: "#1A5294" },
   in_progress: { bg: "#DCE9FA", text: "#4D79B8" },
   checked_out: { bg: "#D8EEF9", text: "#2F7D9F" },
@@ -81,6 +83,7 @@ const SUB_FILTERS: Record<
   pending: [
     { value: "pending", label: "Pending" },
     { value: "on_hold", label: "On hold" },
+    { value: "reschedule", label: "Reschedule" },
   ],
   active: [
     { value: "checked_in", label: "Checked in" },
@@ -92,6 +95,7 @@ const SUB_FILTERS: Record<
 const GROUP_STATUS_MAP: Record<MainFilter, TaskStatus[]> = {
   all: [
     "pending",
+    "reschedule",
     "delivering",
     "arrived",
     "checked_in",
@@ -104,7 +108,7 @@ const GROUP_STATUS_MAP: Record<MainFilter, TaskStatus[]> = {
     "cancelled",
     "on_hold",
   ],
-  pending: ["pending", "on_hold"],
+  pending: ["pending", "on_hold", "reschedule"],
   active: ["checked_in", "in_progress", "checked_out"],
   completed: ["completed"],
   cancelled: ["cancelled"],
@@ -123,6 +127,8 @@ function getFilterLabel(filter: MainFilter, subStatus: TaskStatus | null) {
         return "On hold";
       case "pending":
         return "Pending";
+      case "reschedule":
+        return "Reschedule";
       case "completed":
         return "Done";
       case "cancelled":

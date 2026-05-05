@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -40,6 +41,7 @@ type Props = NativeStackScreenProps<TaskStackParamList, "TaskDetail">;
 
 const DELIVERY_STATUS_LABELS: Record<TaskStatus, string> = {
   pending: "Pending",
+  reschedule: "Reschedule",
   delivering: "Delivering",
   arrived: "Arrived",
   delivered: "Delivered",
@@ -157,6 +159,8 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
   const [actionLoading, setActionLoading] = useState(false);
   const [evidenceImageUri, setEvidenceImageUri] = useState<string | null>(null);
   const [paymentInfo, setPaymentInfo] = useState<PaymentInfo>({});
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [currentImage, setCurrentImage] = useState<string | null>(null);
   const getTaskByIdRef = useRef(getTaskById);
   const taskRef = useRef<Task | undefined>(undefined);
   const paymentRequestIdRef = useRef(0);
@@ -491,6 +495,13 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     }
   };
 
+  const handleOpenImage = useCallback((uri: string) => {
+    const normalized = String(uri ?? "").trim();
+    if (!normalized) return;
+    setCurrentImage(normalized);
+    setViewerVisible(true);
+  }, []);
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
@@ -652,10 +663,16 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
               onPress={handleCaptureEvidence}
             >
               {evidenceImageUri ? (
-                <Image
-                  source={{ uri: evidenceImageUri }}
-                  style={styles.capturePreviewImage}
-                />
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={() => handleOpenImage(evidenceImageUri)}
+                  style={{ width: "100%", height: 220 }}
+                >
+                  <Image
+                    source={{ uri: evidenceImageUri }}
+                    style={styles.capturePreviewImage}
+                  />
+                </TouchableOpacity>
               ) : (
                 <View style={styles.capturePlaceholderWrap}>
                   <Ionicons
@@ -749,10 +766,15 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
                         style={styles.imageCard}
                       >
                         {photo.url ? (
-                          <Image
-                            source={{ uri: photo.url }}
-                            style={styles.imageItem}
-                          />
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => handleOpenImage(photo.url)}
+                          >
+                            <Image
+                              source={{ uri: photo.url }}
+                              style={styles.imageItem}
+                            />
+                          </TouchableOpacity>
                         ) : null}
                         {photo.uploadedAt ? (
                           <Text style={styles.imageMetaText}>
@@ -865,6 +887,26 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
           />
         ) : null}
       </View>
+
+      <Modal visible={viewerVisible} transparent animationType="fade">
+        <View style={styles.modalBackground}>
+          <TouchableOpacity
+            style={styles.closeBtn}
+            onPress={() => setViewerVisible(false)}
+            activeOpacity={0.9}
+          >
+            <Ionicons name="close-circle" size={40} color={Colors.white} />
+          </TouchableOpacity>
+
+          {currentImage ? (
+            <Image
+              source={{ uri: currentImage }}
+              style={styles.fullImage}
+              resizeMode="contain"
+            />
+          ) : null}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -970,6 +1012,8 @@ function StatusMessage({
 
 function getStatusBadgeStyle(status: TaskStatus) {
   switch (status) {
+    case "reschedule":
+      return { backgroundColor: "#EDE9FE" };
     case "delivering":
       return { backgroundColor: "#DBEAFE" };
     case "arrived":
@@ -985,6 +1029,8 @@ function getStatusBadgeStyle(status: TaskStatus) {
 
 function getStatusBadgeTextStyle(status: TaskStatus) {
   switch (status) {
+    case "reschedule":
+      return { color: "#6D28D9" };
     case "delivering":
       return { color: "#1D4ED8" };
     case "arrived":
@@ -1397,5 +1443,21 @@ const styles = StyleSheet.create({
   },
   statusMessageTextError: {
     color: "#B91C1C",
+  },
+  modalBackground: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fullImage: {
+    width: "100%",
+    height: "80%",
+  },
+  closeBtn: {
+    position: "absolute",
+    top: 50,
+    right: 20,
+    zIndex: 10,
   },
 });

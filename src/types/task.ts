@@ -2,6 +2,7 @@ import type { BackendStaffRole, UserRole } from "./user";
 
 export type TaskStatus =
   | "pending"
+  | "reschedule"
   | "delivering"
   | "arrived"
   | "checked_in"

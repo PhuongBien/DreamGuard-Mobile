@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -30,7 +30,7 @@ const PHOTO_LABELS: Record<"before" | "after" | "payment", string> = {
 };
 
 export const PhotoUploadScreen = ({ route, navigation }: Props) => {
-  const { shippingTaskId, photoType } = route.params;
+  const { shippingTaskId, photoType, openCameraImmediately } = route.params;
   const { addTaskPhoto, getTaskById } = useTask();
 
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -39,8 +39,9 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
     mimeType?: string;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const autoCameraLaunchedRef = useRef(false);
 
-  const takePhoto = async () => {
+  const takePhoto = useCallback(async () => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== "granted") {
@@ -68,7 +69,13 @@ export const PhotoUploadScreen = ({ route, navigation }: Props) => {
         error?.message || "Unable to open camera.",
       );
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!openCameraImmediately || autoCameraLaunchedRef.current) return;
+    autoCameraLaunchedRef.current = true;
+    void takePhoto();
+  }, [openCameraImmediately, takePhoto]);
 
   const handleChooseImage = () => {
     // Only allow capturing a new photo via camera (no library uploads).

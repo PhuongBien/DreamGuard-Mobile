@@ -253,7 +253,8 @@ const taskStatusToBackendStatus = (
   | "CheckedOut"
   | "Completed"
   | "ForcedCancelled"
-  | "OnHold" => {
+  | "OnHold"
+  | "Reschedule" => {
   const mapping: Partial<
     Record<TaskStatus, ReturnType<typeof taskStatusToBackendStatus>>
   > = {
@@ -264,6 +265,7 @@ const taskStatusToBackendStatus = (
     completed: "Completed",
     cancelled: "ForcedCancelled",
     on_hold: "OnHold",
+    reschedule: "Reschedule",
   };
 
   return mapping[status] ?? "Pending";
@@ -552,6 +554,7 @@ export const updateTaskStatus = (
     cancelled: "ForcedCancelled",
     on_hold: "OnHold",
     checked_out: "CheckedOut",
+    reschedule: "Reschedule",
   };
 
   const statusPt = mapping[status] ?? "Processing";
@@ -573,6 +576,17 @@ export const updateTaskCheckedInStatus = (taskId: string) =>
 export const updateTaskProcessingStatus = (taskId: string) =>
   apiFetch<Task>(`/api/ServiceTasks/${taskId}/updateProcessingStatus`, {
     method: "PATCH",
+  });
+
+export const updateTaskCompletedStatus = (
+  taskId: string,
+  payload?: { evidenceUrl?: string },
+) =>
+  apiFetch<Task>(`/api/ServiceTasks/${taskId}/updateCompletedStatus`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      evidenceUrl: payload?.evidenceUrl ?? "",
+    }),
   });
 
 export const updateTaskCheckedOutStatus = (
@@ -608,6 +622,20 @@ export const updateTaskCheckedInStatusWithEvidence = (
     body: JSON.stringify({ evidenceUrls: evidenceUrls ?? [] }),
   });
 
+export const rescheduleServiceOrder = (payload: {
+  serviceOrderId: string;
+  newAppointmentDate: string;
+  staffReason?: string;
+}) =>
+  apiFetch<any>("/api/ServiceOrders/reschedule-service-order", {
+    method: "POST",
+    body: JSON.stringify({
+      serviceOrderId: payload.serviceOrderId,
+      newAppointmentDate: payload.newAppointmentDate,
+      staffReason: payload.staffReason ?? "",
+    }),
+  });
+
 //  ServiceTasks/:taskId/notes
 
 export const addTaskNote = (taskId: string, content: string) =>
@@ -620,7 +648,7 @@ export const addTaskNote = (taskId: string, content: string) =>
 
 export interface UploadPhotoPayload {
   taskId: string;
-  type: "before" | "after" | "evidence";
+  type: "before" | "after" | "evidence" | "payment";
   imageUri: string; // local file URI from camera/gallery
   fileName?: string;
   mimeType?: string;
@@ -638,7 +666,13 @@ interface EvidenceUploadCandidate {
 //  tasks/:taskId/photos
 
 const getEvidenceDescription = (type: UploadPhotoPayload["type"]) =>
-  type === "before" ? "before" : type === "after" ? "after" : "evidence";
+  type === "before"
+    ? "before"
+    : type === "after"
+      ? "after"
+      : type === "payment"
+        ? "payment"
+        : "evidence";
 
 const createEvidenceFileName = (rawName?: string) => {
   const resolved = rawName || `photo_${Date.now()}`;

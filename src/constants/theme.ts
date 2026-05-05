@@ -42,6 +42,7 @@ export const Colors = {
   // Status badge colors
   status: {
     pending: { bg: "#FEF3C7", text: "#92400E", dot: "#F59E0B" },
+    reschedule: { bg: "#EDE9FE", text: "#5B21B6", dot: "#7C3AED" },
     delivering: { bg: "#DBEAFE", text: "#1E40AF", dot: "#3B82F6" },
     arrived: { bg: "#E0F2FE", text: "#0C4A6E", dot: "#0284C7" },
     checked_in: { bg: "#DBEAFE", text: "#1E3A8A", dot: "#3B82F6" },

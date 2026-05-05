@@ -19,17 +19,19 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { Colors, Typography, Spacing, Shadow } from "../../constants/theme";
 import { TaskStackParamList } from "../../types/navigation";
-import { Rating, TaskStatus } from "../../types";
+import { Rating, Task, TaskStatus } from "../../types";
 import { useTask } from "../../context/TaskContext";
 import { useAuth } from "../../context/AuthContext";
 import { getRatingsByStaffId } from "../../utils/api";
+import { rescheduleServiceOrder } from "../../utils/api";
 import { formatVietnamAddress } from "../../utils/address";
-import { formatDate, formatTime } from "../../utils/date";
+import { formatDate, formatTime, parseDate } from "../../utils/date";
 
 type Props = NativeStackScreenProps<TaskStackParamList, "TaskDetail">;
 
 const STATUS_TEXT: Record<TaskStatus, string> = {
   pending: "Awaiting processing",
+  reschedule: "Reschedule",
   checked_in: "Checked In",
   in_progress: "In Progress",
   checked_out: "Checked Out",
@@ -45,6 +47,7 @@ const STATUS_TEXT: Record<TaskStatus, string> = {
 
 const NEXT_STATUSES: Record<TaskStatus, TaskStatus[]> = {
   pending: ["checked_in"],
+  reschedule: [],
   checked_in: ["in_progress"],
   in_progress: ["checked_out"],
   on_hold: ["in_progress"],
@@ -58,15 +61,26 @@ const NEXT_STATUSES: Record<TaskStatus, TaskStatus[]> = {
   exchange_requested: [],
 };
 
+const TASK_IMAGE_GROUP_LABELS = {
+  before: "Imgae Before",
+  after: "Images After",
+  payment: "Payment / COD proof",
+  other: "Other images",
+} as const;
+
+/** Service order must be confirmed or already processing (pending / other statuses → no reschedule). */
+function serviceOrderStatusAllowsReschedule(raw: unknown): boolean {
+  const s = String(raw ?? "").trim().toLowerCase().replace(/\s+/g, "");
+  return s === "confirmed" || s === "processing" || s === "inprogress";
+}
+
 function getNextStatuses(status: TaskStatus, taskType?: string): TaskStatus[] {
-  if (taskType === "cleaning" && status === "checked_out") {
-    return [];
-  }
   return NEXT_STATUSES[status] || [];
 }
 
 const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string }> = {
   pending: { bg: "#F8B84A", text: "#1E293B" },
+  reschedule: { bg: "#DDD6FE", text: "#5B21B6" },
   checked_in: { bg: "#A3C4F3", text: "#1A3A6C" },
   in_progress: { bg: "#79A8E8", text: Colors.white },
   checked_out: { bg: "#A7D4FF", text: "#0F2854" },
@@ -84,6 +98,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const { taskId } = route.params;
   const { user } = useAuth();
   const canViewTaskRating = user?.role === "cleaner";
+  const isCleaner = user?.role === "cleaner";
   const {
     tasks,
     getTaskById,
@@ -106,6 +121,18 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const [showPhotoReminder, setShowPhotoReminder] = useState(false);
   const [cancelModalVisible, setCancelModalVisible] = useState(false);
   const [forcedCancelNote, setForcedCancelNote] = useState("");
+  const [rescheduleModalVisible, setRescheduleModalVisible] = useState(false);
+  const [rescheduleDatePart, setRescheduleDatePart] = useState("");
+  const [rescheduleTimePart, setRescheduleTimePart] = useState("");
+  const [rescheduleReason, setRescheduleReason] = useState("");
+  /** After successful reschedule: BE may spin a new task row; hide actions until manager assigns. */
+  const [awaitingManagerReassignUi, setAwaitingManagerReassignUi] =
+    useState(false);
+  const [completeEvidenceModalVisible, setCompleteEvidenceModalVisible] =
+    useState(false);
+  const [completeEvidenceUrl, setCompleteEvidenceUrl] = useState("");
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [currentImage, setCurrentImage] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -139,6 +166,10 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       getTaskById(taskId, { forceRefresh: true }).catch(() => undefined);
     }, [getTaskById, taskId]),
   );
+
+  useEffect(() => {
+    setAwaitingManagerReassignUi(false);
+  }, [taskId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -280,41 +311,55 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     };
   }, [canViewTaskRating, taskId, task, user?.id, getTaskById]);
 
-  if (!task) {
-    return (
-      <SafeAreaView style={styles.safe}>
-        {detailLoading ? (
-          <View style={styles.notFoundWrap}>
-            <ActivityIndicator color={Colors.primary700} />
-            <Text style={styles.notFound}>Loading task details...</Text>
-          </View>
-        ) : (
-          <Text style={styles.notFound}>Task not found</Text>
-        )}
-      </SafeAreaView>
-    );
-  }
+  const taskDetail = useMemo(() => {
+    if (!task) return null;
+    const hasCheckedIn = !!task.checkInOut?.checkIn;
+    const hasCheckedOut = !!task.checkInOut?.checkOut;
+    const effectiveStatus: TaskStatus =
+      task.status === "reschedule"
+        ? "reschedule"
+        : task.status === "pending" && hasCheckedIn
+          ? "checked_in"
+          : task.status === "in_progress" && hasCheckedOut
+            ? "checked_out"
+            : task.status;
+    const nextStatuses = getNextStatuses(effectiveStatus, task.type);
+    const primaryNextStatus: TaskStatus | undefined = nextStatuses[0];
+    const mapping = task.servicePackageMapping;
+    const packageInfo = mapping?.servicePackage;
+    const productTypeInfo = mapping?.productType;
+    const orderStatusEligibleForReschedule =
+      serviceOrderStatusAllowsReschedule(task.serviceOrderStatus);
+    const canRescheduleByTaskStatus =
+      effectiveStatus === "checked_in" || effectiveStatus === "in_progress";
+    const canReschedule =
+      !!task.orderId &&
+      orderStatusEligibleForReschedule &&
+      canRescheduleByTaskStatus;
+    const displayAddress =
+      formatVietnamAddress(task.customer.address) || "No address available";
 
-  const hasCheckedIn = !!task.checkInOut?.checkIn;
-  const hasCheckedOut = !!task.checkInOut?.checkOut;
-  const effectiveStatus: TaskStatus =
-    task.status === "pending" && hasCheckedIn
-      ? "checked_in"
-      : task.status === "in_progress" && hasCheckedOut
-        ? "checked_out"
-        : task.status;
-  const nextStatuses = getNextStatuses(effectiveStatus, task.type);
-  const primaryNextStatus: TaskStatus | undefined = nextStatuses[0];
-  const mapping = task.servicePackageMapping;
-  const packageInfo = mapping?.servicePackage;
-  const productTypeInfo = mapping?.productType;
+    return {
+      effectiveStatus,
+      primaryNextStatus,
+      canReschedule,
+      mapping,
+      packageInfo,
+      productTypeInfo,
+      displayAddress,
+    };
+  }, [task]);
 
-  const photoList = task.photos || [];
-  const sortedPhotoList = [...photoList].sort((a, b) => {
-    const aTime = new Date(a.uploadedAt || 0).getTime();
-    const bTime = new Date(b.uploadedAt || 0).getTime();
-    return bTime - aTime;
-  });
+  const sortedPhotoSource = task?.photos ?? [];
+  const sortedPhotoList = useMemo(
+    () =>
+      [...sortedPhotoSource].sort((a, b) => {
+        const aTime = new Date(a.uploadedAt || 0).getTime();
+        const bTime = new Date(b.uploadedAt || 0).getTime();
+        return bTime - aTime;
+      }),
+    [sortedPhotoSource],
+  );
 
   const dedupedSortedPhotoList = useMemo(() => {
     const seen = new Set<string>();
@@ -329,29 +374,215 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
 
     return out;
   }, [sortedPhotoList]);
-  const displayAddress =
-    formatVietnamAddress(task.customer.address) || "No address available";
+
+  const groupedImageSections = useMemo(() => {
+    const photos = (dedupedSortedPhotoList || []).map((p) => ({
+      ...p,
+      url: String(p?.url ?? "").trim(),
+      type: String(p?.type ?? "").trim(),
+    }));
+
+    const sections = [
+      {
+        key: "before",
+        title: TASK_IMAGE_GROUP_LABELS.before,
+        items: photos.filter((photo) => photo.type === "before"),
+      },
+      {
+        key: "after",
+        title: TASK_IMAGE_GROUP_LABELS.after,
+        items: photos.filter((photo) => photo.type === "after"),
+      },
+      {
+        key: "payment",
+        title: TASK_IMAGE_GROUP_LABELS.payment,
+        items: photos.filter((photo) => photo.type === "payment"),
+      },
+      {
+        key: "other",
+        title: TASK_IMAGE_GROUP_LABELS.other,
+        items: photos.filter(
+          (photo) =>
+            photo.type !== "before" &&
+            photo.type !== "after" &&
+            photo.type !== "payment",
+        ),
+      },
+    ];
+
+    const seenUrls = new Set<string>();
+    return sections
+      .map((section) => ({
+        ...section,
+        items: section.items.filter((item) => {
+          if (!item.url || seenUrls.has(item.url)) return false;
+          seenUrls.add(item.url);
+          return true;
+        }),
+      }))
+      .filter((section) => section.items.length > 0);
+  }, [dedupedSortedPhotoList]);
 
   const getEvidenceUrlsFor = useCallback(
     (kind: "checkin" | "checkout") => {
-      const allUrls = (dedupedSortedPhotoList || [])
-        .map((p) => String(p?.url ?? "").trim())
-        .filter(Boolean);
-
       const preferredType = kind === "checkin" ? "before" : "after";
       const preferred = (dedupedSortedPhotoList || [])
         .filter((p) => p?.type === preferredType)
         .map((p) => String(p?.url ?? "").trim())
         .filter(Boolean);
 
-      const merged = preferred.length ? preferred : allUrls;
       // Keep payload small but sufficient.
-      return Array.from(new Set(merged)).slice(0, 5);
+      return Array.from(new Set(preferred)).slice(0, 5);
     },
     [dedupedSortedPhotoList],
   );
 
+  const getEvidenceUrlsForTask = useCallback(
+    (kind: "checkin" | "checkout", sourceTask: Task) => {
+      const preferredType = kind === "checkin" ? "before" : "after";
+      const preferred = (sourceTask?.photos || [])
+        .filter((p) => p?.type === preferredType)
+        .map((p) => String(p?.url ?? "").trim())
+        .filter(Boolean);
+      return Array.from(new Set(preferred)).slice(0, 5);
+    },
+    [],
+  );
+
+  const guessEvidenceUrlForComplete = useCallback(() => {
+    const payment = (dedupedSortedPhotoList || [])
+      .filter((p) => p?.type === "payment")
+      .map((p) => String(p?.url ?? "").trim())
+      .filter(Boolean);
+
+    if (payment.length) return payment[0];
+
+    const after = (dedupedSortedPhotoList || [])
+      .filter((p) => p?.type === "after")
+      .map((p) => String(p?.url ?? "").trim())
+      .filter(Boolean);
+
+    if (after.length) return after[0];
+
+    const any = (dedupedSortedPhotoList || [])
+      .map((p) => String(p?.url ?? "").trim())
+      .filter(Boolean);
+
+    return any[0] || "";
+  }, [dedupedSortedPhotoList]);
+
+  const handleSubmitReschedule = useCallback(async () => {
+    if (!task || !taskDetail) return;
+    const serviceOrderId = String(task.orderId ?? "").trim();
+    if (!serviceOrderId) {
+      Alert.alert("Missing order", "Service order id is missing.");
+      return;
+    }
+
+    if (!serviceOrderStatusAllowsReschedule(task.serviceOrderStatus)) {
+      Alert.alert(
+        "Not allowed",
+        "Reschedule is only allowed when order status is Confirmed or Processing (not Pending or other statuses).",
+      );
+      return;
+    }
+
+    if (!taskDetail.canReschedule) {
+      Alert.alert(
+        "Not allowed",
+        "Reschedule is only allowed after check-in while the task is checked in or in progress (processing), with an eligible order status (Confirmed/Processing).",
+      );
+      return;
+    }
+
+    const datePart = rescheduleDatePart.trim();
+    const timePart = rescheduleTimePart.trim();
+    if (!datePart || !timePart) {
+      Alert.alert("Missing schedule", "Please enter both date and time.");
+      return;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+      Alert.alert(
+        "Invalid date",
+        "Use calendar date format YYYY-MM-DD (e.g. 2026-04-18).",
+      );
+      return;
+    }
+
+    if (!/^\d{2}:\d{2}$/.test(timePart)) {
+      Alert.alert(
+        "Invalid time",
+        "Use 24-hour time HH:mm (e.g. 14:30).",
+      );
+      return;
+    }
+
+    const parsed = parseDate(`${datePart}T${timePart}`);
+    if (!parsed) {
+      Alert.alert("Invalid datetime", "Could not combine date and time.");
+      return;
+    }
+
+    try {
+      setStatusLoading(true);
+      await rescheduleServiceOrder({
+        serviceOrderId,
+        newAppointmentDate: parsed.toISOString(),
+        staffReason: rescheduleReason.trim(),
+      });
+      await getTaskById(task.id, { forceRefresh: true });
+      setAwaitingManagerReassignUi(true);
+      setRescheduleModalVisible(false);
+      setRescheduleDatePart("");
+      setRescheduleTimePart("");
+      setRescheduleReason("");
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Unable to reschedule.");
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [
+    task,
+    taskDetail,
+    getTaskById,
+    rescheduleDatePart,
+    rescheduleTimePart,
+    rescheduleReason,
+  ]);
+
+  const submitCompleteWithEvidence = useCallback(async () => {
+    if (!task) return;
+    const isCod = String(task.paymentMethod ?? "").trim().toLowerCase() === "cod";
+    const evidenceUrlResolved = completeEvidenceUrl.trim();
+    const fallbackEvidenceUrl = guessEvidenceUrlForComplete().trim();
+    const finalEvidenceUrl = evidenceUrlResolved || fallbackEvidenceUrl;
+
+    // COD: allow completing with either manually entered URL OR uploaded payment photo.
+    if (isCod && !finalEvidenceUrl) {
+      Alert.alert(
+        "Missing evidence",
+        "COD payment requires evidence (upload a payment photo or provide evidence URL) before completing.",
+      );
+      return;
+    }
+
+    try {
+      setStatusLoading(true);
+      await completeTask(task.id, {
+        evidenceUrl: finalEvidenceUrl,
+      });
+      setCompleteEvidenceModalVisible(false);
+      setCompleteEvidenceUrl("");
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Unable to complete task.");
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [completeEvidenceUrl, completeTask, guessEvidenceUrlForComplete, task]);
+
   const handlePrimaryAction = async () => {
+    if (!task) return;
     try {
       setStatusLoading(true);
       const latestTask = (await getTaskById(task.id)) || task;
@@ -365,30 +596,81 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             : latestTask.status;
 
       if (latestEffectiveStatus === "pending") {
-        const evidenceUrls = getEvidenceUrlsFor("checkin");
+        const evidenceUrls = getEvidenceUrlsForTask("checkin", latestTask);
         if (!evidenceUrls.length) {
           Alert.alert(
-            "No images",
-            "Please upload your photos in the Images section before Check-in.",
+            "Photo required — check-in",
+            "Take at least one Before photo before you can check in.",
+            [
+              { text: "Not now", style: "cancel" },
+              {
+                text: "Open camera",
+                onPress: () =>
+                  handleOpenPhotoUpload("before", {
+                    openCameraImmediately: true,
+                  }),
+              },
+            ],
           );
           return;
         }
         await checkInWithEvidence(task.id, evidenceUrls);
       } else if (latestEffectiveStatus === "in_progress") {
-        const evidenceUrls = getEvidenceUrlsFor("checkout");
+        const evidenceUrls = getEvidenceUrlsForTask("checkout", latestTask);
         if (!evidenceUrls.length) {
           Alert.alert(
-            "No images",
-            "Please upload your photos in the Images section before Check-out.",
+            "Photo required — check-out",
+            "Take at least one After photo before you can check out.",
+            [
+              { text: "Not now", style: "cancel" },
+              {
+                text: "Open camera",
+                onPress: () =>
+                  handleOpenPhotoUpload("after", {
+                    openCameraImmediately: true,
+                  }),
+              },
+            ],
           );
           return;
         }
         await checkOutWithEvidence(task.id, evidenceUrls);
         setShowPhotoReminder(true);
       } else if (latestEffectiveStatus === "checked_out") {
-        if (task.type !== "cleaning") {
-          await completeTask(task.id);
+        if (task.type === "cleaning" && !isCleaner) {
+          Alert.alert("Not allowed", "Only cleaning staff can complete this task.");
+          return;
         }
+
+        const afterEvidenceUrls = getEvidenceUrlsForTask("checkout", latestTask);
+        if (!afterEvidenceUrls.length) {
+          Alert.alert(
+            "Photo required — complete",
+            "Take at least one After photo before you can complete.",
+            [
+              { text: "Not now", style: "cancel" },
+              {
+                text: "Open camera",
+                onPress: () =>
+                  handleOpenPhotoUpload("after", {
+                    openCameraImmediately: true,
+                  }),
+              },
+            ],
+          );
+          return;
+        }
+
+        const isCod =
+          String(task.paymentMethod ?? "").trim().toLowerCase() === "cod";
+        if (isCod) {
+          const suggested = guessEvidenceUrlForComplete();
+          setCompleteEvidenceUrl(suggested);
+          setCompleteEvidenceModalVisible(true);
+          return;
+        }
+
+        await completeTask(task.id, { evidenceUrl: "" });
       } else if (latestEffectiveStatus === "checked_in") {
         // Processing is handled by the dedicated button (shown in parallel with Cancelled).
         return;
@@ -402,6 +684,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   };
 
   const handleStartProcessing = useCallback(async () => {
+    if (!task) return;
     try {
       setStatusLoading(true);
       await startProcessing(task.id);
@@ -410,9 +693,10 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     } finally {
       setStatusLoading(false);
     }
-  }, [startProcessing, task.id]);
+  }, [startProcessing, task]);
 
   const submitForcedCancel = useCallback(async () => {
+    if (!task) return;
     const note = forcedCancelNote.trim();
     if (!note) {
       Alert.alert("Missing notes", "Please enter the reason for canceling your order.");
@@ -428,13 +712,63 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     } finally {
       setStatusLoading(false);
     }
-  }, [forcedCancel, forcedCancelNote, task.id]);
-  const handleOpenPhotoUpload = (type: "before" | "after") => {
-    navigation.navigate("PhotoUpload", {
-      shippingTaskId: task.id,
-      photoType: type,
-    });
-  };
+  }, [forcedCancel, forcedCancelNote, task]);
+
+  const handleOpenPhotoUpload = useCallback(
+    (
+      type: "before" | "after" | "payment",
+      options?: { openCameraImmediately?: boolean },
+    ) => {
+      if (!task) return;
+      navigation.navigate("PhotoUpload", {
+        shippingTaskId: task.id,
+        photoType: type,
+        openCameraImmediately: options?.openCameraImmediately === true,
+      });
+    },
+    [navigation, task],
+  );
+
+  const handleOpenImage = useCallback((uri: string) => {
+    const normalized = String(uri ?? "").trim();
+    if (!normalized) return;
+    setCurrentImage(normalized);
+    setViewerVisible(true);
+  }, []);
+
+  if (!task) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        {detailLoading ? (
+          <View style={styles.notFoundWrap}>
+            <ActivityIndicator color={Colors.primary700} />
+            <Text style={styles.notFound}>Loading task details...</Text>
+          </View>
+        ) : (
+          <Text style={styles.notFound}>Task not found</Text>
+        )}
+      </SafeAreaView>
+    );
+  }
+
+  const {
+    effectiveStatus,
+    primaryNextStatus,
+    canReschedule,
+    mapping,
+    packageInfo,
+    productTypeInfo,
+    displayAddress,
+  } = taskDetail!;
+
+  const taskSupersededAwaitingReassign =
+    !!task.rescheduleAwaitingNewTask ||
+    awaitingManagerReassignUi ||
+    task.status === "reschedule";
+
+  const statusForBadge: TaskStatus = taskSupersededAwaitingReassign
+    ? "reschedule"
+    : effectiveStatus;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -462,17 +796,20 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                 styles.statusPill,
                 {
                   backgroundColor:
-                    STATUS_COLORS[task.status]?.bg || Colors.gray300,
+                    STATUS_COLORS[statusForBadge]?.bg || Colors.gray300,
                 },
               ]}
             >
               <Text
                 style={[
                   styles.statusPillText,
-                  { color: STATUS_COLORS[task.status]?.text || Colors.gray800 },
+                  {
+                    color:
+                      STATUS_COLORS[statusForBadge]?.text || Colors.gray800,
+                  },
                 ]}
               >
-                {STATUS_TEXT[task.status]}
+                {STATUS_TEXT[statusForBadge]}
               </Text>
             </View>
           </View>
@@ -552,6 +889,29 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             >{`Total Price: ${formatCurrency(task.totalPrice)}`}</Text>
           </View>
         </View>
+
+        {canReschedule && !taskSupersededAwaitingReassign ? (
+          <TouchableOpacity
+            style={styles.rescheduleAppointmentButton}
+            onPress={() => {
+              const split = splitAppointmentForRescheduleInput(task);
+              setRescheduleDatePart(split.date);
+              setRescheduleTimePart(split.time);
+              setRescheduleReason("");
+              setRescheduleModalVisible(true);
+            }}
+            activeOpacity={0.85}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={20}
+              color={Colors.primary700}
+            />
+            <Text style={styles.rescheduleAppointmentButtonText}>
+              Reschedule appointment
+            </Text>
+          </TouchableOpacity>
+        ) : null}
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>TASK DESCRIPTION</Text>
@@ -639,7 +999,10 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             </Text>
           )}
 
-          {/* Evidence upload is handled in the Images section. */}
+          {/* <Text style={styles.infoTextMutedSmall}>
+            Before photos are needed for check-in. After photos for check-out,
+            payment photos when completing COD.
+          </Text> */}
         </View>
 
         <View style={styles.card}>
@@ -651,62 +1014,85 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             </Text>
           </View>
 
-          <View style={styles.photoActionRow}>
-            <TouchableOpacity
-              style={styles.photoActionButton}
-              onPress={() => handleOpenPhotoUpload("before")}
-              activeOpacity={0.8}
-            >
-              <Ionicons
-                name="camera-outline"
-                size={16}
-                color={Colors.primary500}
-              />
-              <Text style={styles.uploadLinkText}>Upload Before</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.photoActionButton}
-              onPress={() => handleOpenPhotoUpload("after")}
-              activeOpacity={0.8}
-            >
-              <Ionicons
-                name="camera-outline"
-                size={16}
-                color={Colors.primary500}
-              />
-              <Text style={styles.uploadLinkText}>Upload After</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.photoGrid}>
-            {dedupedSortedPhotoList.length ? (
-              dedupedSortedPhotoList.map((photo, index) => (
-                <View key={`${photo.id}_${index}`} style={styles.photoItem}>
-                  <Image
-                    source={{ uri: photo.url }}
-                    style={styles.photoImage}
-                    resizeMode="cover"
-                  />
-                </View>
-              ))
-            ) : (
+          {!taskSupersededAwaitingReassign ? (
+            <View style={styles.photoActionRow}>
               <TouchableOpacity
-                style={styles.photoPlaceholder}
+                style={styles.photoActionButton}
                 onPress={() => handleOpenPhotoUpload("before")}
                 activeOpacity={0.8}
               >
                 <Ionicons
                   name="camera-outline"
-                  size={24}
-                  color={Colors.gray400}
+                  size={16}
+                  color={Colors.primary500}
                 />
+                <Text style={styles.uploadLinkText}>Upload Before</Text>
               </TouchableOpacity>
-            )}
-          </View>
 
-          {showPhotoReminder &&
-            !photoList.some((photo) => photo.type === "after") && (
+              <TouchableOpacity
+                style={styles.photoActionButton}
+                onPress={() => handleOpenPhotoUpload("after")}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name="camera-outline"
+                  size={16}
+                  color={Colors.primary500}
+                />
+                <Text style={styles.uploadLinkText}>Upload After</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <Text style={styles.photoActionsDisabledHint}>
+              Cannot add photos — this task row was superseded after reschedule.
+            </Text>
+          )}
+
+          {groupedImageSections.length ? (
+            <View style={styles.groupedImageWrap}>
+              {groupedImageSections.map((section) => (
+                <View key={section.key} style={styles.imageSectionWrap}>
+                  <Text style={styles.imageSectionTitle}>{section.title}</Text>
+                  <View style={styles.imageGrid}>
+                    {section.items.map((photo, index) => (
+                      <View key={`${photo.url}_${index}`} style={styles.imageCard}>
+                        {photo.url ? (
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => handleOpenImage(photo.url)}
+                          >
+                            <Image
+                              source={{ uri: photo.url }}
+                              style={styles.imageItem}
+                              resizeMode="cover"
+                            />
+                          </TouchableOpacity>
+                        ) : null}
+                        {photo.uploadedAt ? (
+                          <Text style={styles.imageMetaText}>
+                            {formatDate(photo.uploadedAt)} •{" "}
+                            {formatTime(photo.uploadedAt)}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : !taskSupersededAwaitingReassign ? (
+            <TouchableOpacity
+              style={styles.photoPlaceholder}
+              onPress={() => handleOpenPhotoUpload("before")}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="camera-outline" size={24} color={Colors.gray400} />
+            </TouchableOpacity>
+          ) : null}
+
+          {!taskSupersededAwaitingReassign &&
+            showPhotoReminder &&
+            !(task.photos || []).some((photo) => photo.type === "after") && (
               <View style={styles.photoReminder}>
                 <Ionicons name="camera" size={20} color={Colors.primary500} />
                 <Text style={styles.photoReminderText}>
@@ -753,7 +1139,41 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         )}
       </ScrollView>
 
-      {effectiveStatus === "checked_in" ? (
+      {taskSupersededAwaitingReassign ? (
+        <View style={styles.bottomActionWrapper}>
+          <View style={styles.rescheduleAwaitingBanner}>
+            <Ionicons
+              name="information-circle-outline"
+              size={24}
+              color="#92400E"
+            />
+            <Text style={styles.rescheduleAwaitingBannerText}>
+              The task has been rescheduled. Please wait for your manager to arrange and assign a new task.
+            </Text>
+          </View>
+        </View>
+      ) : effectiveStatus === "checked_in" ? (
+        <View style={styles.bottomActionWrapper}>
+          <TouchableOpacity
+            style={[
+              styles.bottomActionButton,
+              statusLoading && styles.bottomActionButtonDisabled,
+            ]}
+            onPress={handleStartProcessing}
+            disabled={statusLoading}
+            activeOpacity={0.85}
+          >
+            {statusLoading ? (
+              <ActivityIndicator color={Colors.white} />
+            ) : (
+              <>
+                <Ionicons name="play-outline" size={16} color={Colors.white} />
+                <Text style={styles.bottomActionText}>Processing</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : effectiveStatus === "in_progress" ? (
         <View style={styles.bottomActionWrapper}>
           <View style={styles.dualBottomRow}>
             <TouchableOpacity
@@ -762,7 +1182,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                 styles.dualBottomBtn,
                 statusLoading && styles.bottomActionButtonDisabled,
               ]}
-              onPress={handleStartProcessing}
+              onPress={handlePrimaryAction}
               disabled={statusLoading}
               activeOpacity={0.85}
             >
@@ -770,8 +1190,14 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                 <ActivityIndicator color={Colors.white} />
               ) : (
                 <>
-                  <Ionicons name="play-outline" size={16} color={Colors.white} />
-                  <Text style={styles.bottomActionText}>Processing</Text>
+                  <Ionicons
+                    name="alert-circle-outline"
+                    size={16}
+                    color={Colors.white}
+                  />
+                  <Text style={styles.bottomActionText}>
+                    {getActionLabel(effectiveStatus)}
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
@@ -875,12 +1301,194 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={rescheduleModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRescheduleModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Reschedule</Text>
+            <Text style={styles.modalSubTitleCompact}>
+              New date and time — sent as ISO to the server.
+            </Text>
+
+            <View style={styles.rescheduleDatetimeRow}>
+              <View style={styles.rescheduleField}>
+                <Text style={styles.rescheduleFieldLabel}>Date</Text>
+                <TextInput
+                  value={rescheduleDatePart}
+                  onChangeText={setRescheduleDatePart}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={Colors.gray400}
+                  style={styles.modalInputSingle}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="numbers-and-punctuation"
+                />
+              </View>
+              <View style={styles.rescheduleField}>
+                <Text style={styles.rescheduleFieldLabel}>Time</Text>
+                <TextInput
+                  value={rescheduleTimePart}
+                  onChangeText={setRescheduleTimePart}
+                  placeholder="HH:mm"
+                  placeholderTextColor={Colors.gray400}
+                  style={styles.modalInputSingle}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="numbers-and-punctuation"
+                />
+              </View>
+            </View>
+
+            <Text
+              style={[styles.rescheduleFieldLabel, styles.rescheduleReasonLabel]}
+            >
+              Reason
+            </Text>
+            <TextInput
+              value={rescheduleReason}
+              onChangeText={setRescheduleReason}
+              placeholder=""
+              placeholderTextColor={Colors.gray400}
+              style={[styles.modalInputSingle, styles.modalReasonInput]}
+              multiline
+            />
+
+            <View style={styles.modalActionsRow}>
+              <TouchableOpacity
+                style={styles.modalSecondaryBtn}
+                onPress={() => setRescheduleModalVisible(false)}
+                activeOpacity={0.85}
+                disabled={statusLoading}
+              >
+                <Text style={styles.modalSecondaryText}>Close</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.bottomActionButton,
+                  statusLoading && styles.bottomActionButtonDisabled,
+                ]}
+                onPress={handleSubmitReschedule}
+                activeOpacity={0.85}
+                disabled={statusLoading}
+              >
+                {statusLoading ? (
+                  <ActivityIndicator color={Colors.white} />
+                ) : (
+                  <Text style={styles.modalDangerText}>Confirm</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={completeEvidenceModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCompleteEvidenceModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Complete (COD)</Text>
+            <Text style={styles.modalSubTitleCompact}>
+              Add a payment proof URL or capture a payment photo — same step as
+              confirming payment.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.codCameraRow}
+              onPress={() => {
+                setCompleteEvidenceModalVisible(false);
+                handleOpenPhotoUpload("payment", {
+                  openCameraImmediately: true,
+                });
+              }}
+              activeOpacity={0.85}
+              disabled={statusLoading}
+            >
+              <Ionicons
+                name="camera-outline"
+                size={22}
+                color={Colors.primary700}
+              />
+              <Text style={styles.codCameraRowText}>Take payment photo</Text>
+            </TouchableOpacity>
+
+            {/* <Text style={styles.modalFieldLabelMuted}>Evidence URL</Text>
+            <TextInput
+              value={completeEvidenceUrl}
+              onChangeText={setCompleteEvidenceUrl}
+              placeholder="Evidence URL"
+              placeholderTextColor={Colors.gray400}
+              style={[styles.modalInput, styles.modalCodUrlInput]}
+              autoCapitalize="none"
+              autoCorrect={false}
+            /> */}
+
+            <View style={styles.modalActionsRow}>
+              <TouchableOpacity
+                style={styles.modalSecondaryBtn}
+                onPress={() => setCompleteEvidenceModalVisible(false)}
+                activeOpacity={0.85}
+                disabled={statusLoading}
+              >
+                <Text style={styles.modalSecondaryText}>Close</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.bottomActionButton,
+                  statusLoading && styles.bottomActionButtonDisabled,
+                ]}
+                onPress={submitCompleteWithEvidence}
+                activeOpacity={0.85}
+                disabled={statusLoading}
+              >
+                {statusLoading ? (
+                  <ActivityIndicator color={Colors.white} />
+                ) : (
+                  <Text style={styles.modalDangerText}>Complete</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={viewerVisible} transparent animationType="fade">
+        <View style={styles.viewerBackdrop}>
+          <TouchableOpacity
+            style={styles.viewerCloseBtn}
+            onPress={() => setViewerVisible(false)}
+            activeOpacity={0.9}
+          >
+            <Ionicons name="close-circle" size={40} color={Colors.white} />
+          </TouchableOpacity>
+
+          {currentImage ? (
+            <Image
+              source={{ uri: currentImage }}
+              style={styles.viewerFullImage}
+              resizeMode="contain"
+            />
+          ) : null}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 function getActionLabel(status: TaskStatus): string {
   switch (status) {
+    case "reschedule":
+      return "";
     case "pending":
       return "Check-in";
     case "checked_in":
@@ -892,6 +1500,56 @@ function getActionLabel(status: TaskStatus): string {
     default:
       return "";
   }
+}
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+/** Prefill reschedule fields from appointment raw ISO or due date / time */
+function splitAppointmentForRescheduleInput(task: Task): {
+  date: string;
+  time: string;
+} {
+  const raw = String(task.appointmentDateRaw ?? "").trim();
+  if (raw) {
+    const d = parseDate(raw);
+    if (d) {
+      return {
+        date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
+        time: `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
+      };
+    }
+  }
+
+  const due = String(task.dueDate ?? "").trim();
+  const dueTimeRaw = String(task.dueTime ?? "").trim();
+  const timeFromDue =
+    /^\d{2}:\d{2}$/.test(dueTimeRaw) ? dueTimeRaw : "09:00";
+
+  if (!due) {
+    return { date: "", time: "" };
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(due)) {
+    const datePart =
+      due.length >= 10 && /^\d{4}-\d{2}-\d{2}$/.test(due.slice(0, 10))
+        ? due.slice(0, 10)
+        : null;
+    if (datePart) {
+      return { date: datePart, time: timeFromDue };
+    }
+  }
+
+  const dDue = parseDate(due);
+  if (!dDue) {
+    return { date: "", time: timeFromDue };
+  }
+
+  return {
+    date: `${dDue.getFullYear()}-${pad2(dDue.getMonth() + 1)}-${pad2(dDue.getDate())}`,
+    time: timeFromDue,
+  };
 }
 
 function formatTaskTime(value?: string | null): string {
@@ -1011,8 +1669,59 @@ const styles = StyleSheet.create({
     fontSize: Typography.md,
     lineHeight: 22,
   },
+  infoTextMutedSmall: {
+    marginTop: 6,
+    color: Colors.gray600,
+    fontSize: Typography.sm,
+    lineHeight: 18,
+    fontWeight: "500",
+  },
   linkText: {
     color: Colors.primary500,
+  },
+  rescheduleAppointmentButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    marginHorizontal: Spacing.base,
+    marginTop: Spacing.sm,
+    paddingVertical: 14,
+    paddingHorizontal: Spacing.base,
+    backgroundColor: "#E8F1FA",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  rescheduleAppointmentButtonText: {
+    color: "#163667",
+    fontSize: Typography.base,
+    fontWeight: "700",
+  },
+  rescheduleAwaitingBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: Spacing.base,
+    backgroundColor: "#FEF3C7",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+  },
+  rescheduleAwaitingBannerText: {
+    flex: 1,
+    color: "#78350F",
+    fontSize: Typography.md,
+    lineHeight: 22,
+    fontWeight: "600",
+  },
+  photoActionsDisabledHint: {
+    marginBottom: Spacing.sm,
+    color: Colors.gray600,
+    fontSize: Typography.sm,
+    lineHeight: 18,
+    fontWeight: "500",
   },
   descriptionText: {
     color: "#24364F",
@@ -1116,6 +1825,7 @@ const styles = StyleSheet.create({
   },
   photoActionRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     marginBottom: Spacing.sm,
   },
@@ -1123,6 +1833,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 100,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "#B9CDE2",
@@ -1270,6 +1983,83 @@ const styles = StyleSheet.create({
     fontSize: Typography.sm,
     fontWeight: "500",
   },
+  modalSubTitleCompact: {
+    marginTop: 4,
+    marginBottom: 2,
+    color: "#49658A",
+    fontSize: Typography.sm,
+    fontWeight: "500",
+    lineHeight: 18,
+  },
+  codCameraRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.sm,
+    paddingVertical: 12,
+    paddingHorizontal: Spacing.base,
+    backgroundColor: "#E8F1FA",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  codCameraRowText: {
+    color: "#163667",
+    fontSize: Typography.base,
+    fontWeight: "700",
+  },
+  modalFieldLabelMuted: {
+    marginTop: Spacing.xs,
+    color: "#35577F",
+    fontSize: Typography.xs,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  modalCodUrlInput: {
+    minHeight: 56,
+    marginTop: 4,
+  },
+  rescheduleDatetimeRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: Spacing.sm,
+  },
+  rescheduleField: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rescheduleFieldLabel: {
+    color: "#35577F",
+    fontSize: Typography.xs,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  rescheduleReasonLabel: {
+    marginTop: 8,
+  },
+  modalInputSingle: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    color: "#23364D",
+    fontSize: Typography.base,
+    backgroundColor: "#F8FAFD",
+  },
+  modalReasonInput: {
+    marginTop: 6,
+    minHeight: 56,
+    textAlignVertical: "top",
+  },
+  modalActionsRowCompact: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: Spacing.sm,
+  },
   modalInput: {
     marginTop: Spacing.sm,
     minHeight: 90,
@@ -1301,7 +2091,8 @@ const styles = StyleSheet.create({
     color: "#35577F",
     fontSize: Typography.base,
     fontWeight: "700",
-    
+    width: "50%",
+    textAlign: "center",
   },
   modalDangerBtn: {
     flex: 1,
@@ -1310,12 +2101,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#B91C1C",
-    
+
   },
   modalDangerText: {
     color: Colors.white,
     fontSize: Typography.base,
-    fontWeight: "800",
+    fontWeight: "700",
+    width: "50%",
+    textAlign: "center",
   },
   ratingRow: {
     flexDirection: "row",
@@ -1338,5 +2131,54 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: Colors.gray500,
     fontSize: Typography.sm,
+  },
+  groupedImageWrap: {
+    gap: 16,
+  },
+  imageSectionWrap: {
+    gap: 10,
+  },
+  imageSectionTitle: {
+    color: "#1F3C65",
+    fontSize: Typography.base,
+    fontWeight: "700",
+  },
+  imageGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  imageCard: {
+    width: 96,
+    gap: 6,
+  },
+  imageItem: {
+    width: 96,
+    height: 96,
+    borderRadius: 12,
+    backgroundColor: "#F3F6FB",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+  },
+  imageMetaText: {
+    color: Colors.gray500,
+    fontSize: Typography.xs,
+    lineHeight: 16,
+  },
+  viewerBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  viewerFullImage: {
+    width: "100%",
+    height: "80%",
+  },
+  viewerCloseBtn: {
+    position: "absolute",
+    top: 50,
+    right: 20,
+    zIndex: 10,
   },
 });

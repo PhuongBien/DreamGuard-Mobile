@@ -104,6 +104,8 @@ export function getStatusLabel(status?: TaskStatus): string {
   switch (status) {
     case "pending":
       return "Pending";
+    case "reschedule":
+      return "Reschedule";
     case "delivering":
       return "Delivering";
     case "arrived":
@@ -130,6 +132,8 @@ export function getStatusColor(status?: TaskStatus): string {
   switch (status) {
     case "pending":
       return "#9E9E9E"; // gray
+    case "reschedule":
+      return "#7C3AED"; // violet
     case "delivering":
       return "#2563EB"; // blue
     case "arrived":

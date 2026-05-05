@@ -60,6 +60,8 @@ export type TaskStackParamList = {
   PhotoUpload: {
     shippingTaskId: string;
     photoType: "before" | "after" | "payment";
+    /** Opens the device camera as soon as the screen mounts (gates from task actions). */
+    openCameraImmediately?: boolean;
   };
 
   DeliveryPhotoCapture: {
