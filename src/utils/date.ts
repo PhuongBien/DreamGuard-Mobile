@@ -122,6 +122,32 @@ export function combineDateAndTime(
   return combined.toISOString();
 }
 
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+/**
+ * Combine date + time into ISO-8601 string in *local time* with explicit offset.
+ * Example: "2026-05-06" + "14:30" -> "2026-05-06T14:30:00+07:00"
+ *
+ * Use this when backend expects the *wall-clock* time the user entered.
+ */
+export function combineDateAndTimeWithOffset(
+  dateString: string,
+  timeString: string,
+): string {
+  const d = new Date(`${dateString}T${timeString}`);
+  if (isNaN(d.getTime())) return "";
+
+  const offsetMinutes = -d.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMinutes);
+  const offsetH = pad2(Math.floor(abs / 60));
+  const offsetM = pad2(abs % 60);
+
+  return `${dateString}T${timeString}:00${sign}${offsetH}:${offsetM}`;
+}
+
 /**
  * Format duration in minutes to readable text
  * Example: 90 -> "1h 30m"

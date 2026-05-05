@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -86,15 +86,36 @@ function buildDedupedSortedPhotosFromTask(
   const sorted = [...sortedPhotoSource].sort((a, b) => {
     const aTime = new Date(a.uploadedAt || 0).getTime();
     const bTime = new Date(b.uploadedAt || 0).getTime();
-    return bTime - aTime;
+    if (aTime !== bTime) return bTime - aTime;
+    return String(a.url || "").localeCompare(String(b.url || ""));
   });
+
+  const bestTypeByKey = new Map<string, string>();
+  for (const p of sorted) {
+    const rawUrl = String(p?.url ?? "").trim();
+    if (!rawUrl) continue;
+    const key = rawUrl.split("?")[0];
+    const currentBest = bestTypeByKey.get(key);
+    if (!currentBest || currentBest === "evidence") {
+      if (p.type && p.type !== "evidence") {
+        bestTypeByKey.set(key, p.type);
+      } else if (!currentBest) {
+        bestTypeByKey.set(key, p.type || "evidence");
+      }
+    }
+  }
+
   const seen = new Set<string>();
   const out: TaskPhoto[] = [];
   for (const p of sorted) {
-    const key = String(p?.url ?? "").trim();
-    if (!key || seen.has(key)) continue;
+    const rawUrl = String(p?.url ?? "").trim();
+    if (!rawUrl) continue;
+    const key = rawUrl.split("?")[0];
+    if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ ...p, url: key });
+    
+    const bestType = bestTypeByKey.get(key) || p.type;
+    out.push({ ...p, url: rawUrl, type: bestType as any });
   }
   return out;
 }
@@ -174,6 +195,19 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const [completeEvidenceUrl, setCompleteEvidenceUrl] = useState("");
   const [viewerVisible, setViewerVisible] = useState(false);
   const [currentImage, setCurrentImage] = useState<string | null>(null);
+  const [pendingEvidenceAction, setPendingEvidenceAction] = useState<
+    null | "checkin" | "checkout"
+  >(null);
+  const [pendingEvidenceTaskId, setPendingEvidenceTaskId] = useState<
+    string | null
+  >(null);
+  const [pendingEvidenceBaselineUrls, setPendingEvidenceBaselineUrls] = useState<
+    string[]
+  >([]);
+
+  // Keep photo UI stable across refresh/hydration (avoid reordering "jumps").
+  const photoStableOrderRef = useRef<Map<string, number>>(new Map());
+  const photoStableOrderCounterRef = useRef(0);
 
   useEffect(() => {
     let mounted = true;
@@ -206,6 +240,127 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       if (!taskId) return;
       getTaskById(taskId, { forceRefresh: true }).catch(() => undefined);
     }, [getTaskById, taskId]),
+  );
+
+  const getEvidenceUrlsFromTask = useCallback(
+    (kind: "checkin" | "checkout", sourceTask: Task) => {
+      const preferredType = kind === "checkin" ? "before" : "after";
+      const urls = [...(sourceTask?.photos || [])]
+        .filter((p) => p?.type === preferredType)
+        .sort((a, b) => {
+          const at = a?.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
+          const bt = b?.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
+          return bt - at;
+        })
+        .map((p) => String(p?.url ?? "").trim())
+        .filter(Boolean);
+      return Array.from(new Set(urls));
+    },
+    [],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+
+      const maybeFinalizePendingEvidence = async () => {
+        if (!taskId) return;
+        if (!pendingEvidenceAction) return;
+        if (pendingEvidenceTaskId && pendingEvidenceTaskId !== taskId) return;
+
+        // Always refetch (camera screen may upload then pop back).
+        let latestTask: Task | null = null;
+        try {
+          latestTask =
+            (await getTaskById(taskId, { forceRefresh: true })) ?? null;
+        } catch {
+          latestTask = task ?? null;
+        }
+
+        if (cancelled || !latestTask) return;
+
+        const latestHasCheckedIn = !!latestTask.checkInOut?.checkIn;
+        const latestHasCheckedOut = !!latestTask.checkInOut?.checkOut;
+        const latestEffectiveStatus: TaskStatus =
+          latestTask.status === "pending" && latestHasCheckedIn
+            ? "checked_in"
+            : latestTask.status === "in_progress" && latestHasCheckedOut
+              ? "checked_out"
+              : latestTask.status;
+
+        // If user already progressed, clear pending.
+        if (
+          (pendingEvidenceAction === "checkin" &&
+            latestEffectiveStatus !== "pending") ||
+          (pendingEvidenceAction === "checkout" &&
+            latestEffectiveStatus !== "in_progress")
+        ) {
+          setPendingEvidenceAction(null);
+          setPendingEvidenceTaskId(null);
+          setPendingEvidenceBaselineUrls([]);
+          return;
+        }
+
+        const currentUrls = getEvidenceUrlsFromTask(
+          pendingEvidenceAction,
+          latestTask,
+        );
+        const baseline = pendingEvidenceBaselineUrls || [];
+        const baselineKeySet = new Set(baseline.map((u) => u.split("?")[0]));
+        const baselineFullSet = new Set(baseline);
+
+        const byKey = currentUrls.filter(
+          (u) => !baselineKeySet.has(u.split("?")[0]),
+        );
+        const byFull = currentUrls.filter((u) => !baselineFullSet.has(u));
+
+        // Primary: key diff (stable across query strings). Fallback: full URL diff.
+        // Last resort: if user just returned from camera/upload, do not trap them in a loop.
+        const newEvidenceUrls =
+          (byKey.length ? byKey : byFull.length ? byFull : currentUrls).slice(
+            0,
+            5,
+          );
+
+        if (!newEvidenceUrls.length) {
+          // Still pending: user must capture at least one new photo.
+          return;
+        }
+
+        try {
+          setStatusLoading(true);
+          if (pendingEvidenceAction === "checkin") {
+            await checkInWithEvidence(taskId, newEvidenceUrls);
+          } else {
+            await checkOutWithEvidence(taskId, newEvidenceUrls);
+            setShowPhotoReminder(true);
+          }
+          setPendingEvidenceAction(null);
+          setPendingEvidenceTaskId(null);
+          setPendingEvidenceBaselineUrls([]);
+        } catch (e: any) {
+          Alert.alert("Error", e?.message || "Unable to update status.");
+        } finally {
+          setStatusLoading(false);
+        }
+      };
+
+      maybeFinalizePendingEvidence();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [
+      taskId,
+      pendingEvidenceAction,
+      pendingEvidenceTaskId,
+      pendingEvidenceBaselineUrls,
+      getTaskById,
+      getEvidenceUrlsFromTask,
+      checkInWithEvidence,
+      checkOutWithEvidence,
+      task,
+    ]),
   );
 
   useEffect(() => {
@@ -397,27 +552,71 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       [...sortedPhotoSource].sort((a, b) => {
         const aTime = new Date(a.uploadedAt || 0).getTime();
         const bTime = new Date(b.uploadedAt || 0).getTime();
-        return bTime - aTime;
+        if (aTime !== bTime) return bTime - aTime;
+        return String(a.url || "").localeCompare(String(b.url || ""));
       }),
     [sortedPhotoSource],
   );
 
   const dedupedSortedPhotoList = useMemo(() => {
+    const bestTypeByKey = new Map<string, string>();
+    for (const p of sortedPhotoList) {
+      const rawUrl = String(p?.url ?? "").trim();
+      if (!rawUrl) continue;
+      const key = rawUrl.split("?")[0];
+      const currentBest = bestTypeByKey.get(key);
+      if (!currentBest || currentBest === "evidence") {
+        if (p.type && p.type !== "evidence") {
+          bestTypeByKey.set(key, p.type);
+        } else if (!currentBest) {
+          bestTypeByKey.set(key, p.type || "evidence");
+        }
+      }
+    }
+
     const seen = new Set<string>();
     const out: typeof sortedPhotoList = [];
 
     for (const p of sortedPhotoList) {
-      const key = String(p?.url ?? "").trim();
-      if (!key || seen.has(key)) continue;
+      const rawUrl = String(p?.url ?? "").trim();
+      if (!rawUrl) continue;
+      const key = rawUrl.split("?")[0];
+      if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ ...p, url: key });
+      
+      const bestType = bestTypeByKey.get(key) || p.type;
+      out.push({ ...p, url: rawUrl, type: bestType as any });
     }
 
     return out;
   }, [sortedPhotoList]);
 
+  const stablePhotoList = useMemo(() => {
+    const keyOf = (url: string) => String(url ?? "").trim().split("?")[0];
+    const map = photoStableOrderRef.current;
+
+    for (const p of dedupedSortedPhotoList) {
+      const k = keyOf(String(p?.url ?? ""));
+      if (!k) continue;
+      if (!map.has(k)) {
+        // New photos get smaller order => appear first, but then stay stable.
+        photoStableOrderCounterRef.current -= 1;
+        map.set(k, photoStableOrderCounterRef.current);
+      }
+    }
+
+    return [...dedupedSortedPhotoList].sort((a, b) => {
+      const ak = keyOf(String(a?.url ?? ""));
+      const bk = keyOf(String(b?.url ?? ""));
+      const ao = ak && map.has(ak) ? (map.get(ak) as number) : 0;
+      const bo = bk && map.has(bk) ? (map.get(bk) as number) : 0;
+      if (ao !== bo) return ao - bo;
+      return ak.localeCompare(bk);
+    });
+  }, [dedupedSortedPhotoList]);
+
   const groupedImageSections = useMemo(() => {
-    const photos = (dedupedSortedPhotoList || []).map((p) => ({
+    const photos = (stablePhotoList || []).map((p) => ({
       ...p,
       url: String(p?.url ?? "").trim(),
       type: String(p?.type ?? "").trim(),
@@ -456,13 +655,15 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       .map((section) => ({
         ...section,
         items: section.items.filter((item) => {
-          if (!item.url || seenUrls.has(item.url)) return false;
-          seenUrls.add(item.url);
+          if (!item.url) return false;
+          const key = item.url.split("?")[0];
+          if (seenUrls.has(key)) return false;
+          seenUrls.add(key);
           return true;
         }),
       }))
       .filter((section) => section.items.length > 0);
-  }, [dedupedSortedPhotoList]);
+  }, [stablePhotoList]);
 
   const getEvidenceUrlsFor = useCallback(
     (kind: "checkin" | "checkout") => {
@@ -537,7 +738,9 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       return;
     }
 
-    const parsed = parseDate(`${datePart}T${timePart}`);
+    // Keep UI + BE aligned: user enters UTC time, server stores UTC ISO (`...Z`).
+    const newAppointmentDate = `${datePart}T${timePart}:00.000Z`;
+    const parsed = parseDate(newAppointmentDate);
     if (!parsed) {
       Alert.alert("Invalid datetime", "Could not combine date and time.");
       return;
@@ -547,7 +750,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       setStatusLoading(true);
       await rescheduleServiceOrder({
         serviceOrderId,
-        newAppointmentDate: parsed.toISOString(),
+        newAppointmentDate,
         staffReason: rescheduleReason.trim(),
       });
       await getTaskById(task.id, { forceRefresh: true });
@@ -625,46 +828,47 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             : latestTask.status;
 
       if (latestEffectiveStatus === "pending") {
-        const evidenceUrls = getEvidenceUrlsForTask("checkin", latestTask);
-        if (!evidenceUrls.length) {
-          Alert.alert(
-            "Photo required — check-in",
-            "Take at least one Before photo before you can check in.",
-            [
-              { text: "Not now", style: "cancel" },
-              {
-                text: "Open camera",
-                onPress: () =>
-                  handleOpenPhotoUpload("before", {
-                    openCameraImmediately: true,
-                  }),
+        const baseline = getEvidenceUrlsFromTask("checkin", latestTask);
+        Alert.alert(
+          "Photo required — check-in",
+          "You must take a new Before photo at the location to check in.",
+          [
+            { text: "Not now", style: "cancel" },
+            {
+              text: "Open camera",
+              onPress: () => {
+                setPendingEvidenceAction("checkin");
+                setPendingEvidenceTaskId(task.id);
+                setPendingEvidenceBaselineUrls(baseline);
+                handleOpenPhotoUpload("before", {
+                  openCameraImmediately: true,
+                });
               },
-            ],
-          );
-          return;
-        }
-        await checkInWithEvidence(task.id, evidenceUrls);
+            },
+          ],
+        );
+        return;
       } else if (latestEffectiveStatus === "in_progress") {
-        const evidenceUrls = getEvidenceUrlsForTask("checkout", latestTask);
-        if (!evidenceUrls.length) {
-          Alert.alert(
-            "Photo required — check-out",
-            "Take at least one After photo before you can check out.",
-            [
-              { text: "Not now", style: "cancel" },
-              {
-                text: "Open camera",
-                onPress: () =>
-                  handleOpenPhotoUpload("after", {
-                    openCameraImmediately: true,
-                  }),
+        const baseline = getEvidenceUrlsFromTask("checkout", latestTask);
+        Alert.alert(
+          "Photo required — check-out",
+          "You must take a new After photo at the location to check out.",
+          [
+            { text: "Not now", style: "cancel" },
+            {
+              text: "Open camera",
+              onPress: () => {
+                setPendingEvidenceAction("checkout");
+                setPendingEvidenceTaskId(task.id);
+                setPendingEvidenceBaselineUrls(baseline);
+                handleOpenPhotoUpload("after", {
+                  openCameraImmediately: true,
+                });
               },
-            ],
-          );
-          return;
-        }
-        await checkOutWithEvidence(task.id, evidenceUrls);
-        setShowPhotoReminder(true);
+            },
+          ],
+        );
+        return;
       } else if (latestEffectiveStatus === "checked_out") {
         if (task.type === "cleaning" && !isCleaner) {
           Alert.alert("Not allowed", "Only cleaning staff can complete this task.");
@@ -697,6 +901,15 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         if (isCod) {
           const refreshedForCod =
             (await getTaskById(task.id, { forceRefresh: true })) ?? latestTask;
+
+          const list = buildDedupedSortedPhotosFromTask(refreshedForCod);
+          const paymentPhoto = list.find((p) => p?.type === "payment" && String(p?.url ?? "").trim() !== "");
+          
+          if (paymentPhoto && paymentPhoto.url) {
+            await completeTask(task.id, { evidenceUrl: paymentPhoto.url });
+            return;
+          }
+
           const suggested = guessEvidenceUrlFromTask(refreshedForCod);
           setCompleteEvidenceUrl(suggested);
           setCompleteEvidenceModalVisible(true);
@@ -1089,7 +1302,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                   <View style={styles.imageGrid}>
                     {section.items.map((photo, index) => (
                       <View
-                        key={String(photo.id ?? photo.url)}
+                        key={String(photo.url ? photo.url.split("?")[0] : `${section.key}_${index}`)}
                         style={styles.imageCard}
                       >
                         {photo.url ? (
@@ -1366,11 +1579,11 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                 />
               </View>
               <View style={styles.rescheduleField}>
-                <Text style={styles.rescheduleFieldLabel}>Time</Text>
+                <Text style={styles.rescheduleFieldLabel}>Time (UTC)</Text>
                 <TextInput
                   value={rescheduleTimePart}
                   onChangeText={setRescheduleTimePart}
-                  placeholder="HH:mm"
+                  placeholder="HH:mm (UTC)"
                   placeholderTextColor={Colors.gray400}
                   style={styles.modalInputSingle}
                   autoCapitalize="none"
@@ -1553,7 +1766,8 @@ function splitAppointmentForRescheduleInput(task: Task): {
     if (d) {
       return {
         date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
-        time: `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
+        // `raw` is typically ISO UTC (`...Z`). Prefill input in UTC to match BE storage.
+        time: `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`,
       };
     }
   }

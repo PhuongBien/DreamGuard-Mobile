@@ -17,6 +17,7 @@ import {
   hydrateTaskPhotosWithPersistedUploadedAt,
   persistTaskPhotoUploadedAt,
 } from "../utils/taskPhotoUploadedAt";
+import { persistTaskLocalPhoto, recallTaskLocalPhotos } from "../utils/taskLocalPhotos";
 
 const isGuid = (value?: string) =>
   !!value &&
@@ -465,17 +466,25 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
 
     if (task && isOwnedTask(task)) {
       const hydrated = await hydrateTaskPhotosWithPersistedUploadedAt(task);
+      const localPhotos = await recallTaskLocalPhotos(taskId);
 
       const mergedTask: Task = existing
         ? {
             ...hydrated,
-            photos: mergePhotos(existing.photos || [], hydrated.photos || []),
+            photos: mergePhotos(
+              mergePhotos(localPhotos, existing.photos || []),
+              hydrated.photos || [],
+            ),
             relatedImageUrls: mergeImageUrls(
               existing.relatedImageUrls || [],
               hydrated.relatedImageUrls || [],
             ),
           }
         : hydrated;
+
+      if (!existing && localPhotos.length) {
+        mergedTask.photos = mergePhotos(localPhotos, mergedTask.photos || []);
+      }
 
       updateLocalTask(mergedTask, { skipHydratePhotos: true });
       return mergedTask;
@@ -610,6 +619,8 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
       uploadedUrl,
       uploadedPhoto.uploadedAt,
     );
+
+    await persistTaskLocalPhoto(existing.id, uploadedPhoto);
 
     updateLocalTask(
       {
