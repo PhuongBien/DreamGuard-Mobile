@@ -328,6 +328,41 @@ const normalizeProducts = (taskId: string, raw: Record<string, any>) => {
       item?.unitPrice ?? item?.price ?? item?.totalPrice,
     );
 
+    const totalQuantity =
+      toNumberOrUndefined(
+        item?.totalQuantity ??
+          item?.totalQty ??
+          item?.total ??
+          item?.quantity,
+      ) ?? 1;
+
+    const exchangeQuantity =
+      toNumberOrUndefined(
+        item?.exchangeQuantity ??
+          item?.exchangeQty ??
+          item?.exchangeRequestedQuantity ??
+          item?.exchangeRequestedQty ??
+          item?.exchangeRequested ??
+          item?.exchange ??
+          item?.tradeInUsedAmount,
+      ) ?? 0;
+
+    const requestedQuantity =
+      toNumberOrUndefined(item?.requestedQuantity ?? item?.requestQuantity) ??
+      exchangeQuantity;
+
+    const returnedQuantity =
+      toNumberOrUndefined(
+        item?.returnedQuantity ??
+          item?.returnQuantity ??
+          item?.returnQty ??
+          item?.returnedQty ??
+          item?.returnRequestedQuantity ??
+          item?.returnRequestedQty ??
+          item?.returnRequested ??
+          item?.return,
+      ) ?? 0;
+
     return {
       id: String(
         item?.id ??
@@ -335,11 +370,18 @@ const normalizeProducts = (taskId: string, raw: Record<string, any>) => {
           item?.shippingOrderItemId ??
           `${taskId}_item_${index}`,
       ),
+      orderItemId: String(
+        item?.orderItemId ?? item?.order_item_id ?? item?.id ?? "",
+      ).trim() || undefined,
       name: String(
         item?.name ?? item?.productName ?? item?.itemName ?? "Product",
       ),
       type: String(item?.type ?? item?.sku ?? item?.productType ?? "delivery"),
-      quantity: Number(item?.quantity ?? 1) || 1,
+      quantity: Number(item?.quantity ?? totalQuantity ?? 1) || 1,
+      totalQuantity,
+      exchangeQuantity,
+      requestedQuantity,
+      returnedQuantity,
       description:
         unitPrice !== undefined
           ? `${new Intl.NumberFormat("en-US").format(unitPrice)} ₫`
@@ -379,28 +421,74 @@ const mergeOrderIntoTask = (task: Task, payload: unknown): Task => {
   );
   const orderItems = Array.isArray(raw.items) ? raw.items : [];
   const products = orderItems.length
-    ? orderItems.map((item: any, index: number) => ({
-        id: String(
-          item?.id ?? item?.orderItemId ?? `${task.id}_order_item_${index}`,
-        ),
-        name: String(
-          item?.itemName ??
-            item?.productName ??
-            item?.name ??
-            item?.title ??
-            "Product",
-        ),
-        type: String(
-          item?.productType ?? item?.sku ?? item?.type ?? "delivery",
-        ),
-        quantity: Number(item?.quantity ?? 1) || 1,
-        description:
+    ? orderItems.map((item: any, index: number) => {
+        const unitPrice = toNumberOrUndefined(
+          item?.totalAmount ?? item?.price ?? item?.unitPrice,
+        );
+
+        const totalQuantity =
           toNumberOrUndefined(
-            item?.totalAmount ?? item?.price ?? item?.unitPrice,
-          ) !== undefined
-            ? `${new Intl.NumberFormat("en-US").format(Number(item?.totalAmount ?? item?.price ?? item?.unitPrice))} ₫`
-            : undefined,
-      }))
+            item?.totalQuantity ??
+              item?.totalQty ??
+              item?.total ??
+              item?.quantity,
+          ) ?? 1;
+
+        const exchangeQuantity =
+          toNumberOrUndefined(
+            item?.exchangeQuantity ??
+              item?.exchangeQty ??
+              item?.exchangeRequestedQuantity ??
+              item?.exchangeRequestedQty ??
+              item?.exchangeRequested ??
+              item?.exchange ??
+              item?.tradeInUsedAmount,
+          ) ?? 0;
+
+        const requestedQuantity =
+          toNumberOrUndefined(item?.requestedQuantity ?? item?.requestQuantity) ??
+          exchangeQuantity;
+
+      const returnedQuantity =
+        toNumberOrUndefined(
+          item?.returnedQuantity ??
+            item?.returnQuantity ??
+            item?.returnQty ??
+            item?.returnedQty ??
+            item?.returnRequestedQuantity ??
+            item?.returnRequestedQty ??
+            item?.returnRequested ??
+            item?.return,
+        ) ?? 0;
+
+        return {
+          id: String(
+            item?.id ?? item?.orderItemId ?? `${task.id}_order_item_${index}`,
+          ),
+          orderItemId: String(
+            item?.orderItemId ?? item?.order_item_id ?? item?.id ?? "",
+          ).trim() || undefined,
+          name: String(
+            item?.itemName ??
+              item?.productName ??
+              item?.name ??
+              item?.title ??
+              "Product",
+          ),
+          type: String(
+            item?.productType ?? item?.sku ?? item?.type ?? "delivery",
+          ),
+          quantity: Number(item?.quantity ?? totalQuantity ?? 1) || 1,
+          totalQuantity,
+          exchangeQuantity,
+          requestedQuantity,
+        returnedQuantity,
+          description:
+            unitPrice !== undefined
+              ? `${new Intl.NumberFormat("en-US").format(unitPrice)} ₫`
+              : undefined,
+        };
+      })
     : task.products;
 
   return {
@@ -487,6 +575,7 @@ const normalizeTask = (input: unknown): Task => {
   const schedule = splitDateTime(
     raw.shippingDate ?? raw.deliveryDate ?? raw.expectedDeliveryTime,
   );
+  const rawShippingStatus = String(raw.status ?? "").trim() || undefined;
   const customerName = String(
     raw.receiverName ??
       customer.name ??
@@ -554,6 +643,18 @@ const normalizeTask = (input: unknown): Task => {
   };
   const hasTimeline = Object.values(deliveryTimeline).some(Boolean);
 
+  const damagedItems = Array.isArray(raw.damagedItems)
+    ? raw.damagedItems
+        .map((item: any) => ({
+          orderItemId: String(item?.orderItemId ?? item?.id ?? "").trim(),
+          damagedQuantity: Number(item?.damagedQuantity ?? item?.quantity ?? 0),
+        }))
+        .filter(
+          (item: any) =>
+            !!item.orderItemId && Number(item.damagedQuantity ?? 0) > 0,
+        )
+    : [];
+
   return {
     id: taskId,
     taskCode,
@@ -561,6 +662,7 @@ const normalizeTask = (input: unknown): Task => {
     description,
     type: "delivery",
     status: normalizeStatus(raw.status),
+    rawShippingStatus,
     priority:
       raw.priority === "urgent" || raw.priority === "high"
         ? raw.priority
@@ -615,6 +717,7 @@ const normalizeTask = (input: unknown): Task => {
       note: customerNote,
     },
     products,
+    damagedItems,
     photos,
     notes: normalizeNotes(taskId, raw),
     deliveryTimeline: hasTimeline ? deliveryTimeline : undefined,
@@ -687,12 +790,16 @@ export const DeliveryTaskService = {
 
   async markReturned(
     taskId: string,
-    reason: string,
-    evidenceUrls: string[],
+    payload: {
+      reason: string;
+      evidenceUrls: string[];
+      damagedItems?: Array<{ orderItemId: string; damagedQuantity: number }>;
+    },
   ): Promise<Task> {
     const response = await updateShippingTaskReturned(taskId, {
-      reason,
-      evidenceUrls,
+      reason: payload.reason,
+      evidenceUrls: payload.evidenceUrls,
+      damagedItems: payload.damagedItems ?? [],
     });
     return (
       (await hydrateTaskWithOrder(parseTask(response.data))) ??

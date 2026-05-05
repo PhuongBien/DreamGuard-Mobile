@@ -91,10 +91,22 @@ export interface CustomerInfo {
 
 export interface ProductItem {
   id: string;
+  /** Stable order item id (matches damagedItems.orderItemId) when available. */
+  orderItemId?: string;
   name: string;
   type: string;
+  /** Quantity to show by default (fallback). */
   quantity: number;
   description?: string;
+
+  /**
+   * Optional raw quantities (BE varies by order type).
+   * Used mainly for exchange/request delivery display rules.
+   */
+  totalQuantity?: number;
+  exchangeQuantity?: number;
+  requestedQuantity?: number;
+  returnedQuantity?: number;
 }
 
 export interface ServiceProductType {
@@ -135,6 +147,8 @@ export interface Task {
 
   type?: TaskType;
   status: TaskStatus;
+  /** Raw shipping status from backend (e.g. Returned/Returning/ExchangeRequested). */
+  rawShippingStatus?: string;
   priority?: TaskPriority;
 
   assignedTo?: string;
@@ -170,6 +184,11 @@ export interface Task {
 
   customer: CustomerInfo;
   products?: ProductItem[];
+  /** ShippingTasks returned/exchange payload */
+  damagedItems?: Array<{
+    orderItemId: string;
+    damagedQuantity: number;
+  }>;
   servicePackageMapping?: ServicePackageMapping;
 
   photos?: TaskPhoto[];

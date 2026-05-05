@@ -374,11 +374,112 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     task?.estimatedDuration
   );
 
+  const displayProducts = useMemo(() => {
+    const normalizeKey = (value: unknown) =>
+      String(value ?? "").trim().toLowerCase().replace(/\s+/g, "");
+
+    const orderStatusKey = normalizeKey(task?.serviceOrderStatus);
+    const taskStatusKey = normalizeKey(task?.status);
+    const rawShippingStatusKey = normalizeKey((task as any)?.rawShippingStatus);
+
+    const damagedQtyByOrderItemId = new Map<string, number>();
+    for (const item of (task as any)?.damagedItems || []) {
+      const id = String(item?.orderItemId ?? "").trim();
+      const qty = Number(item?.damagedQuantity ?? 0);
+      if (!id) continue;
+      if (!Number.isFinite(qty) || qty <= 0) continue;
+      damagedQtyByOrderItemId.set(id, qty);
+    }
+
+    const isReturningRaw =
+      rawShippingStatusKey === "returning" ||
+      rawShippingStatusKey.includes("returning");
+    const isReturnedRaw =
+      rawShippingStatusKey === "returned" || rawShippingStatusKey.includes("returned");
+    const isExchangeRequestedOrder =
+      taskStatusKey === "exchange_requested" ||
+      rawShippingStatusKey === "exchangerequested" ||
+      orderStatusKey === "exchangerequested" ||
+      (orderStatusKey.includes("exchange") && orderStatusKey.includes("request"));
+
+    const isReturnOrder =
+      taskStatusKey === "returned" ||
+      isReturnedRaw ||
+      isReturningRaw ||
+      orderStatusKey === "returned" ||
+      orderStatusKey === "return" ||
+      orderStatusKey.includes("return");
+
+    const isRequestOrder =
+      !isExchangeRequestedOrder &&
+      !isReturnOrder &&
+      (orderStatusKey === "request" ||
+        (orderStatusKey.includes("request") && !orderStatusKey.includes("exchange")));
+
+    const products = task?.products || [];
+
+    const computed = products
+      .map((product) => {
+        const p: any = product as any;
+        const total = Number(p.totalQuantity ?? p.total ?? p.quantity ?? 0);
+        const exchange = Number(
+          p.exchangeQuantity ??
+            p.exchangeRequestedQuantity ??
+            p.exchangeRequested ??
+            p.exchange ??
+            0,
+        );
+        const requested = Number(p.requestedQuantity ?? p.requestQuantity ?? exchange ?? 0);
+        const returned = Number(
+          damagedQtyByOrderItemId.get(
+            String((product as any)?.orderItemId ?? product.id ?? ""),
+          ) ??
+            p.returnedQuantity ??
+            p.returnQuantity ??
+            p.returnRequestedQuantity ??
+            p.returnRequested ??
+            p.return ??
+            0,
+        );
+
+        let displayQty = Number(p.quantity ?? 0);
+
+        if (isRequestOrder) {
+          displayQty = requested;
+        } else if (isExchangeRequestedOrder || isReturnOrder) {
+          // Return rule (per backend payload damagedItems):
+          if (isReturnOrder) {
+            // Show delivered units (only subtract items not delivered/returned).
+            // This matches: "hiển thị những sản phẩm đã được giao, chỉ trừ số lượng không được giao ra".
+            displayQty = total - returned;
+          } else {
+            // ExchangeRequested: show deliverable units = total - exchangeQty
+            displayQty = total - exchange;
+          }
+        }
+
+        return { ...product, quantity: displayQty };
+      })
+      .filter((p) => Number(p.quantity ?? 0) > 0);
+
+    return {
+      computed,
+      hadAny: products.length > 0,
+    };
+  }, [task]);
+
   const needsReceiveOrderForDelivery = useMemo(() => {
     if (!task || task.status !== "pending") return false;
     if (!task.orderId?.trim()) return false;
     return !isServiceOrderReadyForDeliverStart(task.serviceOrderStatus);
   }, [task]);
+
+  const handleOpenImage = useCallback((uri: string) => {
+    const normalized = String(uri ?? "").trim();
+    if (!normalized) return;
+    setCurrentImage(normalized);
+    setViewerVisible(true);
+  }, []);
 
   if (!task) {
     return (
@@ -504,13 +605,6 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     }
   };
 
-  const handleOpenImage = useCallback((uri: string) => {
-    const normalized = String(uri ?? "").trim();
-    if (!normalized) return;
-    setCurrentImage(normalized);
-    setViewerVisible(true);
-  }, []);
-
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.primary900} />
@@ -633,9 +727,9 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
           </Section>
         ) : null}
 
-        {(task.products || []).length ? (
+        {displayProducts.computed.length ? (
           <Section title="Related Products">
-            {(task.products || []).map((product, index) => (
+            {displayProducts.computed.map((product, index) => (
               <View key={product.id || index} style={styles.productRow}>
                 <View style={styles.productInfo}>
                   <Text style={styles.productName}>{product.name}</Text>
@@ -648,6 +742,10 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
                 <Text style={styles.productQty}>x{product.quantity}</Text>
               </View>
             ))}
+          </Section>
+        ) : displayProducts.hadAny ? (
+          <Section title="Related Products">
+            <Text style={styles.centerText}>No products to deliver.</Text>
           </Section>
         ) : null}
 

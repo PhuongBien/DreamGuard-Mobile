@@ -242,6 +242,7 @@ export interface TaskListParams {
 export interface ShippingTaskStatusPayload {
   evidenceUrls?: string[];
   reason?: string;
+  damagedItems?: Array<{ orderItemId: string; damagedQuantity: number }>;
   /**
    * Backend expects `PaymentEvidenceUrl` for delivered payload (COD receipt proof).
    * Keep both casings for compatibility across deployments.
@@ -475,8 +476,33 @@ export const updateShippingTaskReturned = (
   apiFetch<Task>(`/api/ShippingTasks/${taskId}/returned`, {
     method: "PUT",
     body: JSON.stringify({
-      reason: payload.reason ?? "",
-      evidenceUrls: payload.evidenceUrls ?? [],
+      ...(payload.damagedItems
+        ? (() => {
+            const damagedItems = (payload.damagedItems ?? []).map((item) => {
+              const orderItemId = String(item?.orderItemId ?? "").trim();
+              const damagedQuantity = Number(item?.damagedQuantity ?? 0) || 0;
+              return {
+                orderItemId,
+                damagedQuantity,
+                OrderItemId: orderItemId,
+                DamagedQuantity: damagedQuantity,
+              };
+            });
+            return {
+              damagedItems,
+              DamagedItems: damagedItems,
+            };
+          })()
+        : { damagedItems: [], DamagedItems: [] }),
+      ...(payload.reason !== undefined
+        ? { reason: payload.reason ?? "", Reason: payload.reason ?? "" }
+        : { reason: "", Reason: "" }),
+      ...(payload.evidenceUrls !== undefined
+        ? {
+            evidenceUrls: payload.evidenceUrls ?? [],
+            EvidenceUrls: payload.evidenceUrls ?? [],
+          }
+        : { evidenceUrls: [], EvidenceUrls: [] }),
     }),
   });
 

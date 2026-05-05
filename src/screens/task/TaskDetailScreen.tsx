@@ -19,7 +19,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { Colors, Typography, Spacing, Shadow } from "../../constants/theme";
 import { TaskStackParamList } from "../../types/navigation";
-import { Rating, Task, TaskStatus } from "../../types";
+import { Rating, Task, TaskPhoto, TaskStatus } from "../../types";
 import { useTask } from "../../context/TaskContext";
 import { useAuth } from "../../context/AuthContext";
 import { getRatingsByStaffId } from "../../utils/api";
@@ -76,6 +76,47 @@ function serviceOrderStatusAllowsReschedule(raw: unknown): boolean {
 
 function getNextStatuses(status: TaskStatus, taskType?: string): TaskStatus[] {
   return NEXT_STATUSES[status] || [];
+}
+
+/** Same ordering/dedupe as task detail photos list — use explicit task object (e.g. return from getTaskById) so evidence URL is correct before React state catches up. */
+function buildDedupedSortedPhotosFromTask(
+  source: Task | null | undefined,
+): TaskPhoto[] {
+  const sortedPhotoSource = source?.photos ?? [];
+  const sorted = [...sortedPhotoSource].sort((a, b) => {
+    const aTime = new Date(a.uploadedAt || 0).getTime();
+    const bTime = new Date(b.uploadedAt || 0).getTime();
+    return bTime - aTime;
+  });
+  const seen = new Set<string>();
+  const out: TaskPhoto[] = [];
+  for (const p of sorted) {
+    const key = String(p?.url ?? "").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...p, url: key });
+  }
+  return out;
+}
+
+function guessEvidenceUrlFromTask(source: Task | null | undefined): string {
+  const list = buildDedupedSortedPhotosFromTask(source);
+  const payment = list
+    .filter((p) => p?.type === "payment")
+    .map((p) => String(p?.url ?? "").trim())
+    .filter(Boolean);
+  if (payment.length) return payment[0]!;
+
+  const after = list
+    .filter((p) => p?.type === "after")
+    .map((p) => String(p?.url ?? "").trim())
+    .filter(Boolean);
+  if (after.length) return after[0]!;
+
+  const any = list
+    .map((p) => String(p?.url ?? "").trim())
+    .filter(Boolean);
+  return any[0] || "";
 }
 
 const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string }> = {
@@ -449,28 +490,6 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     [],
   );
 
-  const guessEvidenceUrlForComplete = useCallback(() => {
-    const payment = (dedupedSortedPhotoList || [])
-      .filter((p) => p?.type === "payment")
-      .map((p) => String(p?.url ?? "").trim())
-      .filter(Boolean);
-
-    if (payment.length) return payment[0];
-
-    const after = (dedupedSortedPhotoList || [])
-      .filter((p) => p?.type === "after")
-      .map((p) => String(p?.url ?? "").trim())
-      .filter(Boolean);
-
-    if (after.length) return after[0];
-
-    const any = (dedupedSortedPhotoList || [])
-      .map((p) => String(p?.url ?? "").trim())
-      .filter(Boolean);
-
-    return any[0] || "";
-  }, [dedupedSortedPhotoList]);
-
   const handleSubmitReschedule = useCallback(async () => {
     if (!task || !taskDetail) return;
     const serviceOrderId = String(task.orderId ?? "").trim();
@@ -553,9 +572,19 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
 
   const submitCompleteWithEvidence = useCallback(async () => {
     if (!task) return;
-    const isCod = String(task.paymentMethod ?? "").trim().toLowerCase() === "cod";
+
+    let fresh: Task;
+    try {
+      fresh =
+        (await getTaskById(task.id, { forceRefresh: true })) ?? task;
+    } catch {
+      fresh = task;
+    }
+
+    const isCod =
+      String(fresh.paymentMethod ?? "").trim().toLowerCase() === "cod";
     const evidenceUrlResolved = completeEvidenceUrl.trim();
-    const fallbackEvidenceUrl = guessEvidenceUrlForComplete().trim();
+    const fallbackEvidenceUrl = guessEvidenceUrlFromTask(fresh).trim();
     const finalEvidenceUrl = evidenceUrlResolved || fallbackEvidenceUrl;
 
     // COD: allow completing with either manually entered URL OR uploaded payment photo.
@@ -579,7 +608,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     } finally {
       setStatusLoading(false);
     }
-  }, [completeEvidenceUrl, completeTask, guessEvidenceUrlForComplete, task]);
+  }, [completeEvidenceUrl, completeTask, getTaskById, task]);
 
   const handlePrimaryAction = async () => {
     if (!task) return;
@@ -662,9 +691,13 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         }
 
         const isCod =
-          String(task.paymentMethod ?? "").trim().toLowerCase() === "cod";
+          String(latestTask.paymentMethod ?? task.paymentMethod ?? "")
+            .trim()
+            .toLowerCase() === "cod";
         if (isCod) {
-          const suggested = guessEvidenceUrlForComplete();
+          const refreshedForCod =
+            (await getTaskById(task.id, { forceRefresh: true })) ?? latestTask;
+          const suggested = guessEvidenceUrlFromTask(refreshedForCod);
           setCompleteEvidenceUrl(suggested);
           setCompleteEvidenceModalVisible(true);
           return;
@@ -1055,7 +1088,10 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                   <Text style={styles.imageSectionTitle}>{section.title}</Text>
                   <View style={styles.imageGrid}>
                     {section.items.map((photo, index) => (
-                      <View key={`${photo.url}_${index}`} style={styles.imageCard}>
+                      <View
+                        key={String(photo.id ?? photo.url)}
+                        style={styles.imageCard}
+                      >
                         {photo.url ? (
                           <TouchableOpacity
                             activeOpacity={0.85}

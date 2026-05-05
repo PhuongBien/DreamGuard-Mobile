@@ -117,6 +117,22 @@ function paymentStatusPillStyle(status: string): { bg: string; text: string } {
   return { bg: "#ECEEF2", text: "#475569" };
 }
 
+function paymentMethodIndicatesCod(raw?: string): boolean {
+  const method = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+  if (!method) return false;
+
+  return (
+    method === "cod" ||
+    method.includes("cashondelivery") ||
+    method.includes("cash on delivery") ||
+    method.includes("thanh toán khi nhận") ||
+    method.includes("thanh toan khi nhan")
+  );
+}
+
 function normalizeShippingStatus(status?: string): TaskStatus {
   switch (status?.toLowerCase()) {
     case "pending":
@@ -296,6 +312,14 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
     return [...order.payments].sort(
       (a, b) =>
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }, [order?.payments]);
+
+  const requiresCodPaymentEvidence = useMemo(() => {
+    if (!order?.payments?.length) return false;
+
+    return order.payments.some((p) =>
+      paymentMethodIndicatesCod(p?.paymentMethod || p?.paymentType),
     );
   }, [order?.payments]);
 
@@ -1555,6 +1579,8 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
                     mode: "delivered",
                     tradeInFlow: true,
                     tradeInOrderId: order.tradeInOrderId,
+                    requiresCodPaymentEvidence:
+                      requiresCodPaymentEvidence,
                   })
                 }
               >

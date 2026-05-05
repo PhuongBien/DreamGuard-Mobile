@@ -32,34 +32,41 @@ type Props = NativeStackScreenProps<TaskStackParamList, "DeliveryPhotoCapture">;
 type ReturnOutcome = "delivery_failed" | "return" | "exchange";
 
 const RETURN_OUTCOME_LABELS: Record<ReturnOutcome, string> = {
-  delivery_failed: "Giao không thành công",
-  return: "Return (hoàn hàng)",
-  exchange: "Exchange (đổi mới)",
+  delivery_failed: "Delivery failed.",
+  return: "Returns",
+  exchange: "Exchange (renew)",
 };
 
 const RETURN_REASONS: Record<ReturnOutcome, string[]> = {
   delivery_failed: [
-    "Khách không có nhà",
-    "Không liên hệ được khách",
-    "Khách từ chối nhận hàng",
-    "Sai địa chỉ giao hàng",
-    "Khác",
+    "Customer not home",
+    "Unable to contact customer",
+    "Customer refused to accept the package",
+    "Wrong delivery address",
+    "Other",
   ],
   return: [
-    "Khách yêu cầu hoàn",
-    "Sản phẩm bị hư hại",
-    "Giao sai mẫu / sai sản phẩm",
-    "Thiếu phụ kiện / thiếu hàng",
-    "Khác",
+    "Customer requests return",
+    "Product is damaged",
+    "Wrong item delivered",
+    "Missing accessories/items",
+    "Other",
   ],
   exchange: [
-    "Đổi mới do sản phẩm bị lỗi",
-    "Đổi mẫu / đổi sản phẩm theo yêu cầu",
-    "Giao sai mẫu → đổi đúng mẫu",
-    "Hẹn giao lại ngày khác",
-    "Khác",
+    "Exchange due to product defect",
+    "Exchange requested",
+    "Wrong item delivered",
+    "Schedule new delivery",
+    "Other",
   ],
 };
+
+const CANCEL_REASONS: string[] = [
+  "Device mismatch / negotiation failed",
+  "Customer refused the trade-in request",
+  "Unable to verify condition",
+  "Other",
+];
 
 type DamagedDraft = {
   selected: boolean;
@@ -82,10 +89,11 @@ export default function DeliveryPhotoCaptureScreen({
 
   const [imageUris, setImageUris] = useState<string[]>([]);
   const [codPaymentUri, setCodPaymentUri] = useState<string | null>(null);
-  const [returnOutcome, setReturnOutcome] = useState<ReturnOutcome>(
-    "delivery_failed",
-  );
-  const [reason, setReason] = useState<string>(RETURN_REASONS.delivery_failed[0]);
+  const [returnOutcome, setReturnOutcome] =
+    useState<ReturnOutcome>("delivery_failed");
+  const [reason, setReason] = useState<string>(() => {
+    return mode === "forced_cancelled" ? CANCEL_REASONS[0] : RETURN_REASONS.delivery_failed[0];
+  });
   const [customReason, setCustomReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [damagedDraftByItemId, setDamagedDraftByItemId] = useState<
@@ -94,11 +102,22 @@ export default function DeliveryPhotoCaptureScreen({
 
   const isReturnedMode = mode === "returned";
   const isForcedCancelledMode = mode === "forced_cancelled";
-  const needsCodReceipt =
-    !tradeInFlow && mode === "delivered" && requiresCodPaymentEvidence;
+  // For trade-in flow, the delivered endpoint expects only `evidenceUrls`,
+  // so we include COD payment proof as an extra evidence photo when needed.
+  const needsCodReceipt = mode === "delivered" && requiresCodPaymentEvidence;
   const needsReason = isReturnedMode || isForcedCancelledMode;
-  const usesCustomReason = needsReason && reason.trim().toLowerCase() === "khác";
+  const usesCustomReason =
+    needsReason && reason.trim().toLowerCase() === "other";
   const finalReason = usesCustomReason ? customReason.trim() : reason.trim();
+
+  const showReturnOutcomeAndDamagedItems = isReturnedMode && !tradeInFlow;
+  const reasonOptions = isForcedCancelledMode
+    ? CANCEL_REASONS
+    : isReturnedMode
+      ? showReturnOutcomeAndDamagedItems
+        ? RETURN_REASONS[returnOutcome]
+        : RETURN_REASONS.delivery_failed
+      : RETURN_REASONS.delivery_failed;
 
   const task = useMemo(
     () => tasks.find((t: Task) => t.id === shippingTaskId),
@@ -109,7 +128,7 @@ export default function DeliveryPhotoCaptureScreen({
     [task],
   );
   const itemReasonOptions = useMemo(
-    () => ["Bị hư hại", "Giao sai mẫu / sai sản phẩm", "Thiếu hàng", "Khác"],
+    () => ["Damaged", "Wrong item delivered", "Missing items", "Other"],
     [],
   );
 
@@ -123,19 +142,19 @@ export default function DeliveryPhotoCaptureScreen({
             button: "Confirm forced cancel",
           }
         : isReturnedMode
-        ? {
-            title: "Delivery failed.",
-            subtitle:
-              "Chọn trạng thái (giao không thành công / return / exchange), chọn lý do, chọn sản phẩm lỗi và chụp ảnh bằng chứng trước khi cập nhật.",
-            button: "Confirm failed delivery",
-          }
-        : {
-            title: "Delivery successful",
-            subtitle: needsCodReceipt
-              ? "Capture delivery proof, then a separate photo proving COD payment was received."
-              : "Capture evidence of successful delivery.",
-            button: "Confirm successful delivery",
-          },
+          ? {
+              title: "Delivery failed.",
+              subtitle:
+                "Select status (delivery failed / return / exchange), select reason, select damaged products and take evidence photos before updating.",
+              button: "Confirm failed delivery",
+            }
+          : {
+              title: "Delivery successful",
+              subtitle: needsCodReceipt
+                ? "Capture delivery proof, then a separate photo proving COD payment was received."
+                : "Capture evidence of successful delivery.",
+              button: "Confirm successful delivery",
+            },
     [isReturnedMode, isForcedCancelledMode, needsCodReceipt],
   );
 
@@ -252,9 +271,17 @@ export default function DeliveryPhotoCaptureScreen({
             uploadedUrls,
           );
         } else {
+          const evidenceUrlsForDelivered = [...uploadedUrls];
+          if (needsCodReceipt && codPaymentUri) {
+            const paymentUrl = await uploadImageToCloudinary(codPaymentUri);
+            if (!paymentUrl)
+              throw new Error("Could not upload COD payment proof.");
+            evidenceUrlsForDelivered.push(paymentUrl);
+          }
+
           await DeliveryTaskService.markDeliveredForTradeIn(
             shippingTaskId,
-            uploadedUrls,
+            evidenceUrlsForDelivered,
           );
           if (tradeInOrderId) {
             await TradeInOrderService.updateDelivered(tradeInOrderId);
@@ -277,29 +304,21 @@ export default function DeliveryPhotoCaptureScreen({
 
         if (isReturnedMode) {
           const damagedItems = Object.entries(damagedDraftByItemId)
-            .filter(([_, draft]) => draft?.selected && draft.damagedQuantity > 0)
+            .filter(
+              ([_, draft]) => draft?.selected && draft.damagedQuantity > 0,
+            )
             .map(([orderItemId, draft]) => ({
               orderItemId,
               damagedQuantity: draft.damagedQuantity,
             }));
 
-          const damagedNoteLines = Object.entries(damagedDraftByItemId)
-            .filter(([_, draft]) => draft?.selected && draft.damagedQuantity > 0)
-            .map(([orderItemId, draft]) => {
-              const product =
-                availableProducts.find((p) => p.id === orderItemId) ?? null;
-              const name = product?.name ? ` - ${product.name}` : "";
-              const detail = draft.itemReason?.trim()
-                ? ` (${draft.itemReason.trim()})`
-                : "";
-              return `• ${orderItemId}${name}: x${draft.damagedQuantity}${detail}`;
-            });
-
           const outcomeLabel = RETURN_OUTCOME_LABELS[returnOutcome];
           const baseReason = `${outcomeLabel} - ${finalReason}`.trim();
-          const reasonText = damagedNoteLines.length
-            ? `${baseReason}\nSản phẩm lỗi/đổi/hoàn:\n${damagedNoteLines.join("\n")}`
-            : baseReason;
+          // IMPORTANT:
+          // - Backend is expected to store `reason` (often in `staffNote`).
+          // - Do NOT serialize damaged item details into `reason`.
+          // - Send damaged items through `damagedItems` only.
+          const reasonText = baseReason;
 
           await markReturned(shippingTaskId, {
             reason: reasonText,
@@ -345,9 +364,9 @@ export default function DeliveryPhotoCaptureScreen({
 
       {needsReason ? (
         <View style={styles.reasonBlock}>
-          {isReturnedMode ? (
+          {showReturnOutcomeAndDamagedItems ? (
             <>
-              <Text style={styles.sectionLabel}>Trạng thái xử lý</Text>
+              <Text style={styles.sectionLabel}>Processing status</Text>
               <View style={styles.reasonWrap}>
                 {(Object.keys(RETURN_OUTCOME_LABELS) as ReturnOutcome[]).map(
                   (key) => {
@@ -383,13 +402,10 @@ export default function DeliveryPhotoCaptureScreen({
             </>
           ) : null}
 
-          <Text style={styles.sectionLabel}>Lý do</Text>
+          <Text style={styles.sectionLabel}>Reason</Text>
 
           <View style={styles.reasonWrap}>
-            {(isReturnedMode
-              ? RETURN_REASONS[returnOutcome]
-              : RETURN_REASONS.delivery_failed
-            ).map((item) => {
+            {reasonOptions.map((item) => {
               const active = reason === item;
 
               return (
@@ -425,9 +441,9 @@ export default function DeliveryPhotoCaptureScreen({
             />
           ) : null}
 
-          {isReturnedMode ? (
+          {showReturnOutcomeAndDamagedItems ? (
             <View style={styles.damagedBlock}>
-              <Text style={styles.sectionLabel}>Chọn sản phẩm bị lỗi</Text>
+              <Text style={styles.sectionLabel}>Select damaged products</Text>
               {availableProducts.length ? (
                 availableProducts.map((product) => {
                   const draft = damagedDraftByItemId[product.id] ?? {
@@ -467,14 +483,14 @@ export default function DeliveryPhotoCaptureScreen({
                         <View style={styles.damagedInfo}>
                           <Text style={styles.damagedName}>{product.name}</Text>
                           <Text style={styles.damagedMeta}>
-                            SL tối đa: {maxQty}
+                            maximum quantity: {maxQty}
                           </Text>
                         </View>
                       </TouchableOpacity>
 
                       <View style={styles.damagedControls}>
                         <View style={styles.qtyRow}>
-                          <Text style={styles.qtyLabel}>Số lượng</Text>
+                          <Text style={styles.qtyLabel}>Quantity</Text>
                           <TextInput
                             style={[
                               styles.qtyInput,
@@ -502,7 +518,7 @@ export default function DeliveryPhotoCaptureScreen({
                           />
                         </View>
 
-                        <Text style={styles.qtyLabel}>Lý do sản phẩm</Text>
+                        {/* <Text style={styles.qtyLabel}>Lý do sản phẩm</Text>
                         <View style={styles.itemReasonWrap}>
                           {itemReasonOptions.map((opt) => {
                             const on = draft.itemReason === opt;
@@ -539,14 +555,14 @@ export default function DeliveryPhotoCaptureScreen({
                               </TouchableOpacity>
                             );
                           })}
-                        </View>
+                        </View> */}
                       </View>
                     </View>
                   );
                 })
               ) : (
                 <Text style={styles.damagedEmpty}>
-                  Không tìm thấy danh sách sản phẩm trong đơn để chọn.
+                  No products were found in the order to select from.
                 </Text>
               )}
             </View>
@@ -617,7 +633,10 @@ export default function DeliveryPhotoCaptureScreen({
             disabled={loading}
           >
             {codPaymentUri ? (
-              <Image source={{ uri: codPaymentUri }} style={styles.codPreview} />
+              <Image
+                source={{ uri: codPaymentUri }}
+                style={styles.codPreview}
+              />
             ) : (
               <View style={styles.placeholderWrap}>
                 <Ionicons
@@ -669,16 +688,14 @@ export default function DeliveryPhotoCaptureScreen({
       <TouchableOpacity
         style={[
           styles.submitButton,
-          ((!imageUris.length ||
-            (needsCodReceipt && !codPaymentUri)) ||
+          (!imageUris.length ||
+            (needsCodReceipt && !codPaymentUri) ||
             loading) &&
             styles.submitButtonDisabled,
         ]}
         activeOpacity={0.85}
         disabled={
-          !imageUris.length ||
-          (needsCodReceipt && !codPaymentUri) ||
-          loading
+          !imageUris.length || (needsCodReceipt && !codPaymentUri) || loading
         }
         onPress={handleSubmit}
       >

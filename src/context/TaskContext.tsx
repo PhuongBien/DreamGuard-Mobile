@@ -753,17 +753,43 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
       evidenceUrls,
       options,
     );
+    const paymentUrl = String(options?.paymentEvidenceUrl ?? "").trim();
+    const paymentPhoto =
+      paymentUrl && existing
+        ? ({
+            id: `payment_${existing.taskCode || existing.id}_${Date.now()}`,
+            url: paymentUrl,
+            type: "payment",
+            uploadedAt: new Date().toISOString(),
+            uploadedBy: String(user?.id ?? user?.userId ?? "delivery_staff"),
+            captureStage: "delivery_success",
+          } as TaskPhoto)
+        : null;
+
+    const patched: Task = paymentUrl
+      ? {
+          ...updated,
+          paymentEvidenceUrl: paymentUrl,
+          photos: paymentPhoto
+            ? mergePhotos([paymentPhoto, ...(existing?.photos || [])], updated.photos || [])
+            : updated.photos,
+          relatedImageUrls: mergeImageUrls(
+            paymentPhoto ? [paymentUrl, ...(existing?.relatedImageUrls || [])] : (existing?.relatedImageUrls || []),
+            updated.relatedImageUrls || [],
+          ),
+        }
+      : updated;
     updateLocalTask(
       existing
         ? {
-            ...updated,
-            photos: mergePhotos(existing.photos || [], updated.photos || []),
-            relatedImageUrls: mergeImageUrls(
-              existing.relatedImageUrls || [],
-              updated.relatedImageUrls || [],
-            ),
+          ...patched,
+          photos: mergePhotos(existing.photos || [], patched.photos || []),
+          relatedImageUrls: mergeImageUrls(
+            existing.relatedImageUrls || [],
+            patched.relatedImageUrls || [],
+          ),
           }
-        : updated,
+        : patched,
     );
   };
 
@@ -782,11 +808,12 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
         ? evidenceUrls ?? []
         : payload?.evidenceUrls ?? [];
 
-    const updated = await DeliveryTaskService.markReturned(
-      taskId,
-      resolvedReason,
-      resolvedEvidenceUrls,
-    );
+    const updated = await DeliveryTaskService.markReturned(taskId, {
+      reason: resolvedReason,
+      evidenceUrls: resolvedEvidenceUrls,
+      damagedItems:
+        typeof payload === "string" ? [] : (payload?.damagedItems ?? []),
+    });
     updateLocalTask(
       existing
         ? {
