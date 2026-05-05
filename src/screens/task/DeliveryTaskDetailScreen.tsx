@@ -410,6 +410,13 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       orderStatusKey === "return" ||
       orderStatusKey.includes("return");
 
+    // Partial delivery then reschedule: BE may mark task as Reschedule while still
+    // returning damagedItems for the undelivered/returned units.
+    const isRescheduleWithReturnedItems =
+      taskStatusKey === "reschedule" &&
+      Array.isArray((task as any)?.damagedItems) &&
+      (task as any).damagedItems.length > 0;
+
     const isRequestOrder =
       !isExchangeRequestedOrder &&
       !isReturnOrder &&
@@ -417,6 +424,11 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
         (orderStatusKey.includes("request") && !orderStatusKey.includes("exchange")));
 
     const products = task?.products || [];
+
+    let displayedQtySum = 0;
+    let rawQtySum = 0;
+    let hasAnyUnitPrice = false;
+    let computedTotalByUnitPrice = 0;
 
     const computed = products
       .map((product) => {
@@ -446,9 +458,9 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
 
         if (isRequestOrder) {
           displayQty = requested;
-        } else if (isExchangeRequestedOrder || isReturnOrder) {
+        } else if (isExchangeRequestedOrder || isReturnOrder || isRescheduleWithReturnedItems) {
           // Return rule (per backend payload damagedItems):
-          if (isReturnOrder) {
+          if (isReturnOrder || isRescheduleWithReturnedItems) {
             // Show delivered units (only subtract items not delivered/returned).
             // This matches: "hiển thị những sản phẩm đã được giao, chỉ trừ số lượng không được giao ra".
             displayQty = total - returned;
@@ -458,13 +470,58 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
           }
         }
 
+        const safeDisplayQty = Number.isFinite(displayQty) ? Math.max(0, displayQty) : 0;
+        const safeRawTotal = Number.isFinite(total) ? Math.max(0, total) : 0;
+        displayedQtySum += safeDisplayQty;
+        rawQtySum += safeRawTotal;
+
+        const unitPrice = Number(
+          p.unitPrice ??
+            p.unit_price ??
+            p.price ??
+            p.itemPrice ??
+            p.amount ??
+            p.value ??
+            0,
+        );
+        if (Number.isFinite(unitPrice) && unitPrice > 0 && safeDisplayQty > 0) {
+          hasAnyUnitPrice = true;
+          computedTotalByUnitPrice += unitPrice * safeDisplayQty;
+        }
+
         return { ...product, quantity: displayQty };
       })
       .filter((p) => Number(p.quantity ?? 0) > 0);
 
+    const shouldAvoidShowingOrderTotal =
+      isReturnOrder ||
+      isExchangeRequestedOrder ||
+      isRequestOrder ||
+      isRescheduleWithReturnedItems;
+
+    const totalValue = hasAnyUnitPrice
+      ? computedTotalByUnitPrice
+      : (() => {
+          const orderTotal = Number((task as any)?.totalPrice ?? 0);
+          if (!Number.isFinite(orderTotal) || orderTotal <= 0) return undefined;
+
+          // If we can't find per-item price, we approximate by delivered-qty ratio.
+          // This prevents showing the "full order" total for partial return/reschedule flows.
+          if (rawQtySum > 0 && displayedQtySum >= 0) {
+            const ratio = Math.min(1, Math.max(0, displayedQtySum / rawQtySum));
+            const estimated = orderTotal * ratio;
+            return Number.isFinite(estimated) ? estimated : undefined;
+          }
+
+          // Full delivery: showing order total is acceptable.
+          return shouldAvoidShowingOrderTotal ? undefined : orderTotal;
+        })();
+
     return {
       computed,
       hadAny: products.length > 0,
+      totalValue,
+      shouldAvoidShowingOrderTotal,
     };
   }, [task]);
 
@@ -699,7 +756,13 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
             />
             <KeyValueRow
               label="Total value"
-              value={formatCurrency(task.totalPrice)}
+              value={
+                displayProducts.totalValue !== undefined
+                  ? formatCurrency(displayProducts.totalValue)
+                  : displayProducts.shouldAvoidShowingOrderTotal
+                    ? "-"
+                    : formatCurrency(task.totalPrice)
+              }
             />
             <KeyValueRow
               label="Payment method"
@@ -1507,7 +1570,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     minHeight: 54,
-    width: 200,
+    // width: "100%",
     borderRadius: 14,
     backgroundColor: Colors.primary700,
     alignItems: "center",
