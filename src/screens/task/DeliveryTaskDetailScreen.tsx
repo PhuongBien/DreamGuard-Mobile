@@ -152,7 +152,7 @@ const extractPaymentInfo = (payload: unknown): PaymentInfo => {
 export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
   const { shippingTaskId, type } = route.params;
 
-  const { tasks, getTaskById, startDelivery, markArrived, addTaskPhoto } =
+  const { tasks, getTaskById, startDelivery, markArrived } =
     useTask();
 
   const [detailLoading, setDetailLoading] = useState(false);
@@ -350,6 +350,22 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
   const noteItems = task?.notes || [];
   const paymentMethodValue = paymentInfo.paymentMethod ?? task?.paymentMethod;
   const paymentStatusValue = paymentInfo.paymentStatus ?? task?.paymentStatus;
+  const requiresCodPaymentEvidence = useMemo(() => {
+    const method = String(paymentMethodValue ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "");
+    return method === "cod" || method.includes("cashondelivery");
+  }, [paymentMethodValue]);
+  const paymentEvidenceUrl = useMemo(() => {
+    const url = String(
+      (task as any)?.PaymentEvidenceUrl ??
+        task?.paymentEvidenceUrl ??
+        (task?.photos || []).find((p) => p.type === "payment")?.url ??
+        "",
+    ).trim();
+    return url || null;
+  }, [task]);
   const showOrderSection = !!(
     task?.serviceOrderStatus ||
     paymentMethodValue ||
@@ -435,13 +451,6 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       setActionLoading(true);
 
       const cloudinaryUrl = await uploadImageToCloudinary(evidenceImageUri);
-      await addTaskPhoto(task.id, {
-        url: cloudinaryUrl,
-        type: "evidence",
-        uploadedBy: "delivery_staff",
-        captureStage: "start_delivery",
-      });
-
       await startDelivery(task.id, [cloudinaryUrl]);
 
       await getTaskById(task.id, { forceRefresh: true });
@@ -606,6 +615,21 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
               label="Payment status"
               value={paymentStatusValue || "-"}
             />
+            {paymentEvidenceUrl ? (
+              <View style={{ marginTop: Spacing.base }}>
+                <Text style={styles.imageSectionTitle}>Payment proof (COD)</Text>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => handleOpenImage(paymentEvidenceUrl)}
+                  style={{ marginTop: Spacing.sm }}
+                >
+                  <Image
+                    source={{ uri: paymentEvidenceUrl }}
+                    style={styles.capturePreviewImage}
+                  />
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </Section>
         ) : null}
 
@@ -864,6 +888,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
                 navigation.navigate("DeliveryPhotoCapture", {
                   shippingTaskId: task.id,
                   mode: "delivered",
+                  requiresCodPaymentEvidence,
                 })
               }
             >

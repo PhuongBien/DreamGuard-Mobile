@@ -243,6 +243,13 @@ const normalizePhotos = (taskId: string, payload: Record<string, any>) => {
 
   return photoSources
     .map((item, index) => {
+      const rawEvidenceType = String(
+        typeof item === "string"
+          ? ""
+          : (item as any)?.evidenceType ?? (item as any)?.type ?? "",
+      )
+        .trim()
+        .toLowerCase();
       const url =
         typeof item === "string"
           ? item
@@ -264,7 +271,7 @@ const normalizePhotos = (taskId: string, payload: Record<string, any>) => {
             `delivery_photo_${taskId}_${index}`,
         ),
         url,
-        type: "evidence",
+        type: rawEvidenceType.includes("payment") ? "payment" : "evidence",
         uploadedAt:
           typeof item === "string"
             ? ""
@@ -510,6 +517,8 @@ const normalizeTask = (input: unknown): Task => {
     raw.staffNote ?? raw.description ?? raw.note ?? "",
   ).trim();
   const photos = normalizePhotos(taskId, raw);
+  const paymentPhotoUrl =
+    photos.find((p) => p.type === "payment")?.url ?? undefined;
   const relatedImageUrls = photos.map((item) => item.url);
   const products = normalizeProducts(taskId, raw);
   const assignedBackendRole = pickAssignedBackendRole(raw);
@@ -582,6 +591,14 @@ const normalizeTask = (input: unknown): Task => {
       String(raw.paymentMethod ?? raw.paymentType ?? "").trim() || undefined,
     paymentStatus:
       String(raw.paymentStatus ?? raw.paymentState ?? "").trim() || undefined,
+    paymentEvidenceUrl:
+      toTrimmedString(raw.PaymentEvidenceUrl) ??
+      toTrimmedString(raw.paymentEvidenceUrl) ??
+      toTrimmedString(raw.paymentEvidenceURL) ??
+      toTrimmedString((raw as any)?.payment?.PaymentEvidenceUrl) ??
+      toTrimmedString((raw as any)?.payment?.paymentEvidenceUrl) ??
+      paymentPhotoUrl ??
+      undefined,
     totalPrice: toNumberOrUndefined(
       raw.totalPrice ?? raw.totalAmount ?? raw.orderValue,
     ),
@@ -652,9 +669,14 @@ export const DeliveryTaskService = {
     );
   },
 
-  async markDelivered(taskId: string, evidenceUrls: string[]): Promise<Task> {
+  async markDelivered(
+    taskId: string,
+    evidenceUrls: string[],
+    options?: { paymentEvidenceUrl?: string },
+  ): Promise<Task> {
     const response = await updateShippingTaskDelivered(taskId, {
       evidenceUrls,
+      paymentEvidenceUrl: options?.paymentEvidenceUrl,
     });
 
     return (

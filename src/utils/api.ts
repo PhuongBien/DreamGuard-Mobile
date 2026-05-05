@@ -242,6 +242,12 @@ export interface TaskListParams {
 export interface ShippingTaskStatusPayload {
   evidenceUrls?: string[];
   reason?: string;
+  /**
+   * Backend expects `PaymentEvidenceUrl` for delivered payload (COD receipt proof).
+   * Keep both casings for compatibility across deployments.
+   */
+  paymentEvidenceUrl?: string;
+  PaymentEvidenceUrl?: string;
 }
 
 const taskStatusToBackendStatus = (
@@ -449,7 +455,17 @@ export const updateShippingTaskDelivered = (
 ) =>
   apiFetch<Task>(`/api/ShippingTasks/${taskId}/delivered`, {
     method: "PUT",
-    body: JSON.stringify({ evidenceUrls: payload.evidenceUrls ?? [] }),
+    body: JSON.stringify({
+      evidenceUrls: payload.evidenceUrls ?? [],
+      ...(payload.PaymentEvidenceUrl || payload.paymentEvidenceUrl
+        ? {
+            PaymentEvidenceUrl:
+              payload.PaymentEvidenceUrl ?? payload.paymentEvidenceUrl,
+            paymentEvidenceUrl:
+              payload.paymentEvidenceUrl ?? payload.PaymentEvidenceUrl,
+          }
+        : {}),
+    }),
   });
 
 export const updateShippingTaskReturned = (

@@ -159,6 +159,8 @@ export interface Task {
   serviceOrderId?: string;
   paymentMethod?: string;
   paymentStatus?: string;
+  /** Delivery COD: photo proving payment was collected */
+  paymentEvidenceUrl?: string;
   totalPrice?: number;
   customerNote?: string;
   appointmentDateRaw?: string;

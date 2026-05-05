@@ -745,12 +745,13 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
   const markDelivered = async (
     taskId: string,
     evidenceUrls: string[],
-    _options?: { paymentEvidenceUrl?: string },
+    options?: { paymentEvidenceUrl?: string },
   ) => {
     const existing = tasksRef.current.find((task) => task.id === taskId);
     const updated = await DeliveryTaskService.markDelivered(
       taskId,
       evidenceUrls,
+      options,
     );
     updateLocalTask(
       existing
