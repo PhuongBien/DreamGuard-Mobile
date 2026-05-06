@@ -70,7 +70,6 @@ export default function LoginScreen({ navigation }: Props) {
   const { login, isLoading, error } = useAuth();
   const [phoneNumber, setPhoneNumber] = useState("");
   const [password, setPassword] = useState("");
-  const [showPass, setShowPass] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
@@ -181,18 +180,8 @@ export default function LoginScreen({ navigation }: Props) {
                       setPassword(v);
                       setErrorMsg("");
                     }}
-                    secureTextEntry={!showPass}
+                    // Removed secureTextEntry to prevent screen share black screen
                   />
-                  <TouchableOpacity
-                    onPress={() => setShowPass((s) => !s)}
-                    style={styles.eyeBtn}
-                  >
-                    {showPass ? (
-                      <AntDesign name="eye" size={22} color="gray" />
-                    ) : (
-                      <AntDesign name="eye-invisible" size={22} color="gray" />
-                    )}
-                  </TouchableOpacity>
                 </View>
               </View>
 

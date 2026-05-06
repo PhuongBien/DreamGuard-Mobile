@@ -373,6 +373,17 @@ export default function RatingsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const customerNameByorderIdRef = useRef<Map<string, string>>(new Map());
+  const loadInFlightRef = useRef(false);
+  const lastLoadAtRef = useRef(0);
+  const cachedRemoteCustomerMapRef = useRef<{
+    staffId: string | null;
+    fetchedAt: number;
+    map: Map<string, string>;
+  }>({
+    staffId: null,
+    fetchedAt: 0,
+    map: new Map(),
+  });
 
   const customerNameByorderId = useMemo(() => {
     const map = new Map<string, string>();
@@ -386,8 +397,22 @@ export default function RatingsScreen() {
   }, [customerNameByorderId]);
 
   const loadRatings = useCallback(
-    async (silent = false) => {
+    async (silent = false, opts?: { force?: boolean }) => {
       if (!user?.id || user.role !== "cleaner") return;
+
+      // Guard against spam: avoid overlapping calls + apply stale time.
+      const now = Date.now();
+      const STALE_MS = 30_000;
+      const force = opts?.force === true;
+      if (!force && now - lastLoadAtRef.current < STALE_MS) {
+        return;
+      }
+      if (loadInFlightRef.current) {
+        return;
+      }
+      loadInFlightRef.current = true;
+      lastLoadAtRef.current = now;
+
       if (!silent) setLoading(true);
       setError(null);
       try {
@@ -417,20 +442,39 @@ export default function RatingsScreen() {
           return;
         }
 
-        const remoteMap = new Map(currentCustomerMap);
-        const maxPages = 5;
-        const pageSize = 100;
+        // Only fetch tasks pages once in a while; this loop can be expensive.
+        const remoteCache = cachedRemoteCustomerMapRef.current;
+        const REMOTE_CACHE_MS = 5 * 60_000;
+        const canReuseRemoteCache =
+          remoteCache.staffId === user.id &&
+          now - remoteCache.fetchedAt < REMOTE_CACHE_MS &&
+          remoteCache.map.size > 0;
 
-        for (let page = 1; page <= maxPages; page += 1) {
-          const pageTasks = await TaskService.getTasks({
-            page,
-            pageSize,
+        const remoteMap = canReuseRemoteCache
+          ? new Map(remoteCache.map)
+          : new Map(currentCustomerMap);
+
+        if (!canReuseRemoteCache) {
+          const maxPages = 5;
+          const pageSize = 100;
+
+          for (let page = 1; page <= maxPages; page += 1) {
+            const pageTasks = await TaskService.getTasks({
+              page,
+              pageSize,
+              staffId: user.id,
+            });
+
+            if (!pageTasks.length) break;
+            mergeTaskNamesIntoMap(remoteMap, pageTasks);
+            if (pageTasks.length < pageSize) break;
+          }
+
+          cachedRemoteCustomerMapRef.current = {
             staffId: user.id,
-          });
-
-          if (!pageTasks.length) break;
-          mergeTaskNamesIntoMap(remoteMap, pageTasks);
-          if (pageTasks.length < pageSize) break;
+            fetchedAt: Date.now(),
+            map: remoteMap,
+          };
         }
 
         const remoteEnriched = localEnriched.map((item) => {
@@ -453,6 +497,7 @@ export default function RatingsScreen() {
       } finally {
         setLoading(false);
         setRefreshing(false);
+        loadInFlightRef.current = false;
       }
     },
     [user?.id, user?.role],
@@ -467,12 +512,12 @@ export default function RatingsScreen() {
   );
 
   useEffect(() => {
-    loadRatings();
+    loadRatings(false, { force: false });
   }, [loadRatings]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    loadRatings(true);
+    loadRatings(true, { force: true });
   }, [loadRatings]);
 
   return (

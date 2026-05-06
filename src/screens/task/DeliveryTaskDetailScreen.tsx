@@ -164,6 +164,9 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
   const getTaskByIdRef = useRef(getTaskById);
   const taskRef = useRef<Task | undefined>(undefined);
   const paymentRequestIdRef = useRef(0);
+  const loadTaskInFlightRef = useRef(false);
+  const lastLoadTaskAtRef = useRef(0);
+  const lastPaymentOrderIdRef = useRef<string | null>(null);
 
   const task = useMemo(
     () => tasks.find((item) => item.id === shippingTaskId),
@@ -186,6 +189,12 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       return;
     }
 
+    // Avoid spamming the same payment lookup when task refreshes rapidly.
+    if (lastPaymentOrderIdRef.current === orderId) {
+      return;
+    }
+    lastPaymentOrderIdRef.current = orderId;
+
     try {
       const response = await fetchPaymentByOrderId(orderId);
 
@@ -202,6 +211,13 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
   const loadTask = useCallback(async () => {
     if (!shippingTaskId) return; // 👈 chặn undefined
 
+    // Dedupe + throttle focus-driven refreshes (prevents bursty reload loops).
+    if (loadTaskInFlightRef.current) return;
+    const now = Date.now();
+    if (now - lastLoadTaskAtRef.current < 1500) return;
+    lastLoadTaskAtRef.current = now;
+    loadTaskInFlightRef.current = true;
+
     const shouldShowLoader = !taskRef.current;
 
     try {
@@ -215,6 +231,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
 
       await loadPaymentInfo(refreshedTask?.orderId ?? taskRef.current?.orderId);
     } finally {
+      loadTaskInFlightRef.current = false;
       if (shouldShowLoader) {
         setDetailLoading(false);
       }

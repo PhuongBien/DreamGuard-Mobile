@@ -204,6 +204,11 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const [pendingEvidenceBaselineUrls, setPendingEvidenceBaselineUrls] = useState<
     string[]
   >([]);
+  const focusRefetchInFlightRef = useRef(false);
+  const lastFocusRefetchAtRef = useRef(0);
+  const lastFocusSuccessfulRefreshAtRef = useRef(0);
+  const pendingEvidenceAttemptsRef = useRef(0);
+  const lastPendingEvidenceCheckAtRef = useRef(0);
 
   // Keep photo UI stable across refresh/hydration (avoid reordering "jumps").
   const photoStableOrderRef = useRef<Map<string, number>>(new Map());
@@ -238,8 +243,30 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   useFocusEffect(
     useCallback(() => {
       if (!taskId) return;
-      getTaskById(taskId, { forceRefresh: true }).catch(() => undefined);
-    }, [getTaskById, taskId]),
+      if (focusRefetchInFlightRef.current) return;
+      const now = Date.now();
+      if (now - lastFocusRefetchAtRef.current < 1500) return;
+
+      // Avoid hammering API/DB on frequent focus toggles.
+      // Only force refresh if data is "stale enough".
+      const STALE_MS = 10_000;
+      if (task && now - lastFocusSuccessfulRefreshAtRef.current < STALE_MS) {
+        return;
+      }
+
+      lastFocusRefetchAtRef.current = now;
+      focusRefetchInFlightRef.current = true;
+
+      const forceRefresh = !task || now - lastFocusSuccessfulRefreshAtRef.current >= STALE_MS;
+      getTaskById(taskId, forceRefresh ? { forceRefresh: true } : undefined)
+        .catch(() => undefined)
+        .finally(() => {
+          focusRefetchInFlightRef.current = false;
+          if (forceRefresh) {
+            lastFocusSuccessfulRefreshAtRef.current = Date.now();
+          }
+        });
+    }, [getTaskById, taskId, task]),
   );
 
   const getEvidenceUrlsFromTask = useCallback(
@@ -268,7 +295,23 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         if (!pendingEvidenceAction) return;
         if (pendingEvidenceTaskId && pendingEvidenceTaskId !== taskId) return;
 
-        // Always refetch (camera screen may upload then pop back).
+        // Throttle + cap retries to avoid spamming API/DB if the upload is slow
+        // or the backend doesn't reflect the new photo immediately.
+        const now = Date.now();
+        if (now - lastPendingEvidenceCheckAtRef.current < 2000) return;
+        lastPendingEvidenceCheckAtRef.current = now;
+
+        pendingEvidenceAttemptsRef.current += 1;
+        const MAX_ATTEMPTS = 3;
+        if (pendingEvidenceAttemptsRef.current > MAX_ATTEMPTS) {
+          setPendingEvidenceAction(null);
+          setPendingEvidenceTaskId(null);
+          setPendingEvidenceBaselineUrls([]);
+          pendingEvidenceAttemptsRef.current = 0;
+          return;
+        }
+
+        // Refetch (camera screen may upload then pop back).
         let latestTask: Task | null = null;
         try {
           latestTask =
@@ -338,6 +381,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           setPendingEvidenceAction(null);
           setPendingEvidenceTaskId(null);
           setPendingEvidenceBaselineUrls([]);
+          pendingEvidenceAttemptsRef.current = 0;
         } catch (e: any) {
           Alert.alert("Error", e?.message || "Unable to update status.");
         } finally {
@@ -362,6 +406,12 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       task,
     ]),
   );
+
+  useEffect(() => {
+    // Reset retry counters when user starts a new evidence flow.
+    pendingEvidenceAttemptsRef.current = 0;
+    lastPendingEvidenceCheckAtRef.current = 0;
+  }, [pendingEvidenceAction, taskId]);
 
   useEffect(() => {
     setAwaitingManagerReassignUi(false);
@@ -406,22 +456,23 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         return;
       }
 
+      // If rating is already embedded in current task, do not refetch.
+      if (task?.rating?.score) {
+        setTaskRating({
+          id: task.rating.id || task.id,
+          score: task.rating.score,
+          comment: task.rating.comment,
+          createdAt: task.rating.createdAt,
+        });
+        return;
+      }
+
       const baseTask =
         task ||
         (taskId ? await getTaskById(taskId, { forceRefresh: true }) : null);
 
       if (cancelled || !baseTask) {
         if (!cancelled) setTaskRating(null);
-        return;
-      }
-
-      if (baseTask.rating?.score) {
-        setTaskRating({
-          id: baseTask.rating.id || baseTask.id,
-          score: baseTask.rating.score,
-          comment: baseTask.rating.comment,
-          createdAt: baseTask.rating.createdAt,
-        });
         return;
       }
 
@@ -505,7 +556,15 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [canViewTaskRating, taskId, task, user?.id, getTaskById]);
+  }, [
+    canViewTaskRating,
+    taskId,
+    // Only depend on rating presence, not whole task object (avoid refetch on every photo update).
+    task?.id,
+    task?.rating?.score,
+    user?.id,
+    getTaskById,
+  ]);
 
   const taskDetail = useMemo(() => {
     if (!task) return null;
@@ -849,6 +908,13 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         );
         return;
       } else if (latestEffectiveStatus === "in_progress") {
+        const afterEvidenceUrls = getEvidenceUrlsForTask("checkout", latestTask);
+        if (afterEvidenceUrls.length) {
+          await checkOutWithEvidence(task.id, afterEvidenceUrls);
+          setShowPhotoReminder(true);
+          return;
+        }
+
         const baseline = getEvidenceUrlsFromTask("checkout", latestTask);
         Alert.alert(
           "Photo required — check-out",

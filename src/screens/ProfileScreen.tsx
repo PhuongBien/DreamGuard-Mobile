@@ -1,6 +1,6 @@
 // KBS Staff App — Profile Screen (Professional Version)
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -46,12 +46,23 @@ export default function ProfileScreen() {
   const { tasks } = useTask();
   const [profileUser, setProfileUser] = useState(user);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
+  const loadInFlightRef = useRef(false);
+  const lastProfileLoadAtRef = useRef(0);
 
   useEffect(() => {
     let isMounted = true;
 
     const loadStaffProfile = async () => {
       if (!user) return;
+
+      // Prevent API spam: avoid loops caused by setUser() and rapid re-renders.
+      const now = Date.now();
+      const STALE_MS = 60_000;
+      if (loadInFlightRef.current) return;
+      if (now - lastProfileLoadAtRef.current < STALE_MS) return;
+
+      loadInFlightRef.current = true;
+      lastProfileLoadAtRef.current = now;
 
       setIsProfileLoading(true);
 
@@ -60,7 +71,38 @@ export default function ProfileScreen() {
         if (!isMounted) return;
 
         setProfileUser(latestProfile);
-        setUser((prev) => (prev ? { ...prev, ...latestProfile } : prev));
+        setUser((prev) => {
+          if (!prev) return prev;
+
+          const prevComparable = {
+            id: prev.id,
+            userId: (prev as any).userId,
+            role: prev.role,
+            name: prev.name,
+            email: prev.email,
+            phone: prev.phone,
+            avatarUrl: (prev as any).avatarUrl,
+            dateOfBirth: (prev as any).dateOfBirth,
+            position: (prev as any).position,
+            address: (prev as any).address,
+          };
+          const nextComparable = {
+            id: latestProfile.id,
+            userId: (latestProfile as any).userId,
+            role: latestProfile.role,
+            name: latestProfile.name,
+            email: latestProfile.email,
+            phone: latestProfile.phone,
+            avatarUrl: (latestProfile as any).avatarUrl,
+            dateOfBirth: (latestProfile as any).dateOfBirth,
+            position: (latestProfile as any).position,
+            address: (latestProfile as any).address,
+          };
+
+          const unchanged =
+            JSON.stringify(prevComparable) === JSON.stringify(nextComparable);
+          return unchanged ? prev : { ...prev, ...latestProfile };
+        });
       } catch {
         if (!isMounted) return;
         setProfileUser(user);
@@ -68,6 +110,7 @@ export default function ProfileScreen() {
         if (isMounted) {
           setIsProfileLoading(false);
         }
+        loadInFlightRef.current = false;
       }
     };
 
@@ -76,7 +119,7 @@ export default function ProfileScreen() {
     return () => {
       isMounted = false;
     };
-  }, [user, setUser]);
+  }, [user?.id, setUser]);
 
   const displayUser = useMemo(() => profileUser || user, [profileUser, user]);
 
