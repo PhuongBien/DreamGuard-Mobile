@@ -1392,31 +1392,7 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
           </View>
 
           {selectedPhotos.length > 0 ? (
-            <TouchableOpacity
-              style={[
-                styles.bottomActionButton,
-                { marginTop: Spacing.sm },
-                actionLoading && styles.bottomActionButtonDisabled,
-              ]}
-              onPress={handleUploadDevicePhotos}
-              disabled={actionLoading}
-              activeOpacity={0.85}
-            >
-              {actionLoading ? (
-                <ActivityIndicator color={Colors.white} />
-              ) : (
-                <>
-                  <Ionicons
-                    name="cloud-upload-outline"
-                    size={16}
-                    color={Colors.white}
-                  />
-                  <Text style={styles.bottomActionText}>
-                    Upload to trade-in order
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
+            null
           ) : null}
         </View>
 
@@ -1597,39 +1573,11 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
           ) : null}
 
           {taskStatus === "delivered" ? (
-            <View style={{ gap: 10 }}>
-              <View style={styles.photoReminder}>
-                <Ionicons name="checkmark-circle" size={20} color="#0284C7" />
-                <Text style={styles.photoReminderText}>
-                  Task delivered successfully. Evidence was submitted.
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.secondaryActionButton,
-                  actionLoading && styles.bottomActionButtonDisabled,
-                ]}
-                activeOpacity={0.85}
-                disabled={actionLoading}
-                onPress={() =>
-                  navigation.navigate("DeliveryPhotoCapture", {
-                    shippingTaskId: activeTaskId,
-                    mode: "forced_cancelled",
-                    tradeInFlow: true,
-                    tradeInOrderId: order.tradeInOrderId,
-                  })
-                }
-              >
-                <Ionicons
-                  name="warning-outline"
-                  size={16}
-                  color={Colors.error}
-                />
-                <Text style={styles.secondaryActionText}>
-                  Forced cancel (trade-in mismatch)
-                </Text>
-              </TouchableOpacity>
+            <View style={styles.photoReminder}>
+              <Ionicons name="checkmark-circle" size={20} color="#0284C7" />
+              <Text style={styles.photoReminderText}>
+                Task delivered successfully. Evidence was submitted.
+              </Text>
             </View>
           ) : null}
 

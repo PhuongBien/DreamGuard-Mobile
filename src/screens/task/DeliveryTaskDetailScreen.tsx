@@ -395,12 +395,66 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     const normalizeKey = (value: unknown) =>
       String(value ?? "").trim().toLowerCase().replace(/\s+/g, "");
 
+    const extractOrderItemId = (product: unknown): string => {
+      const p: any = product as any;
+      const candidates = [
+        p?.orderItemId,
+        p?.order_item_id,
+        p?.orderItemID,
+        p?.orderItem?.id,
+        p?.orderItem?.orderItemId,
+        p?.id,
+      ];
+      for (const candidate of candidates) {
+        const id = String(candidate ?? "").trim();
+        if (id) return id;
+      }
+      return "";
+    };
+
     const orderStatusKey = normalizeKey(task?.serviceOrderStatus);
     const taskStatusKey = normalizeKey(task?.status);
     const rawShippingStatusKey = normalizeKey((task as any)?.rawShippingStatus);
 
+    const parseUnitPriceFromDescription = (value: unknown): number | undefined => {
+      if (typeof value !== "string") return undefined;
+      const raw = value.replace(/₫/g, "").replace(/,/g, "").trim();
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+    };
+
+    // Some BE flows create a new ShippingTask row for the same order after an exchange/return
+    // (e.g. ExchangeRequested -> Delivering) but the newer row may no longer include `damagedItems`.
+    // To keep "Related products" stable until the end of the delivery flow, we aggregate the
+    // latest known damagedItems by orderId from TaskContext.
+    const parseIsoMs = (value?: string) => {
+      if (!value) return 0;
+      const ms = new Date(value).getTime();
+      return Number.isFinite(ms) ? ms : 0;
+    };
+    const pickTaskDamageTimestampMs = (t: Task) => {
+      const anyT: any = t as any;
+      return Math.max(
+        parseIsoMs(anyT?.completionDate),
+        parseIsoMs(anyT?.shippingDate),
+        parseIsoMs(t?.deliveryTimeline?.returnedAt),
+        parseIsoMs(t?.deliveryTimeline?.deliveredAt),
+        parseIsoMs(t?.updatedAt),
+        parseIsoMs(t?.createdAt),
+      );
+    };
     const damagedQtyByOrderItemId = new Map<string, number>();
-    for (const item of (task as any)?.damagedItems || []) {
+    const orderIdKey = String(task?.orderId ?? "").trim();
+    const relatedOrderTasks = orderIdKey
+      ? tasks.filter((t) => String(t?.orderId ?? "").trim() === orderIdKey)
+      : [];
+    const sourceTaskForDamages =
+      relatedOrderTasks
+        .filter((t) => Array.isArray((t as any)?.damagedItems) && ((t as any).damagedItems.length ?? 0) > 0)
+        .sort((a, b) => pickTaskDamageTimestampMs(b) - pickTaskDamageTimestampMs(a))[0] ??
+      task;
+
+    for (const item of (sourceTaskForDamages as any)?.damagedItems || []) {
       const id = String(item?.orderItemId ?? "").trim();
       const qty = Number(item?.damagedQuantity ?? 0);
       if (!id) continue;
@@ -444,7 +498,6 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
 
     let displayedQtySum = 0;
     let rawQtySum = 0;
-    let hasAnyUnitPrice = false;
     let computedTotalByUnitPrice = 0;
 
     const computed = products
@@ -458,11 +511,19 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
             p.exchange ??
             0,
         );
-        const requested = Number(p.requestedQuantity ?? p.requestQuantity ?? exchange ?? 0);
+        const requested = Number(
+          p.requestedQuantity ??
+            p.requestQuantity ??
+            p.exchangeRequestedQuantity ??
+            p.exchangeQuantity ??
+            p.exchangeRequested ??
+            p.exchange ??
+            0,
+        );
+        const orderItemId = extractOrderItemId(product);
         const returned = Number(
-          damagedQtyByOrderItemId.get(
-            String((product as any)?.orderItemId ?? product.id ?? ""),
-          ) ??
+          damagedQtyByOrderItemId.get(orderItemId) ??
+            p.damagedQuantity ??
             p.returnedQuantity ??
             p.returnQuantity ??
             p.returnRequestedQuantity ??
@@ -473,18 +534,19 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
 
         let displayQty = Number(p.quantity ?? 0);
 
+        // Logic mới:
+        // - Return / Failed / Returning: displayQty = total - returned
+        // - Reschedule có hoàn trả (có damagedItems): displayQty = total - returned
+        // - Exchange requested: displayQty = total - exchange
+        // - Request: displayQty = requested
         if (isRequestOrder) {
           displayQty = requested;
-        } else if (isExchangeRequestedOrder || isReturnOrder || isRescheduleWithReturnedItems) {
-          // Return rule (per backend payload damagedItems):
-          if (isReturnOrder || isRescheduleWithReturnedItems) {
-            // Show delivered units (only subtract items not delivered/returned).
-            // This matches: "hiển thị những sản phẩm đã được giao, chỉ trừ số lượng không được giao ra".
-            displayQty = total - returned;
-          } else {
-            // ExchangeRequested: show deliverable units = total - exchangeQty
-            displayQty = total - exchange;
-          }
+        } else if (isExchangeRequestedOrder) {
+          displayQty = total - exchange;
+        } else if (isReturnOrder || isReturningRaw || isRescheduleWithReturnedItems) {
+          displayQty = total - returned;
+        } else {
+          displayQty = Number(p.quantity ?? 0);
         }
 
         const safeDisplayQty = Number.isFinite(displayQty) ? Math.max(0, displayQty) : 0;
@@ -492,17 +554,21 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
         displayedQtySum += safeDisplayQty;
         rawQtySum += safeRawTotal;
 
-        const unitPrice = Number(
-          p.unitPrice ??
-            p.unit_price ??
-            p.price ??
-            p.itemPrice ??
-            p.amount ??
-            p.value ??
-            0,
-        );
-        if (Number.isFinite(unitPrice) && unitPrice > 0 && safeDisplayQty > 0) {
-          hasAnyUnitPrice = true;
+        const unitPrice =
+          ((): number | undefined => {
+            const direct = Number(
+              p.unitPrice ??
+                p.unit_price ??
+                p.price ??
+                p.itemPrice ??
+                p.amount ??
+                p.value ??
+                0,
+            );
+            if (Number.isFinite(direct) && direct > 0) return direct;
+            return parseUnitPriceFromDescription(p.description);
+          })() ?? 0;
+        if (unitPrice > 0 && safeDisplayQty > 0) {
           computedTotalByUnitPrice += unitPrice * safeDisplayQty;
         }
 
@@ -516,23 +582,8 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       isRequestOrder ||
       isRescheduleWithReturnedItems;
 
-    const totalValue = hasAnyUnitPrice
-      ? computedTotalByUnitPrice
-      : (() => {
-          const orderTotal = Number((task as any)?.totalPrice ?? 0);
-          if (!Number.isFinite(orderTotal) || orderTotal <= 0) return undefined;
-
-          // If we can't find per-item price, we approximate by delivered-qty ratio.
-          // This prevents showing the "full order" total for partial return/reschedule flows.
-          if (rawQtySum > 0 && displayedQtySum >= 0) {
-            const ratio = Math.min(1, Math.max(0, displayedQtySum / rawQtySum));
-            const estimated = orderTotal * ratio;
-            return Number.isFinite(estimated) ? estimated : undefined;
-          }
-
-          // Full delivery: showing order total is acceptable.
-          return shouldAvoidShowingOrderTotal ? undefined : orderTotal;
-        })();
+    // Total value = sum(unitPrice * displayQty) (only the "deliveredQty" that is displayed).
+    const totalValue = computedTotalByUnitPrice;
 
     return {
       computed,
@@ -540,7 +591,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       totalValue,
       shouldAvoidShowingOrderTotal,
     };
-  }, [task]);
+  }, [task, tasks]);
 
   const needsReceiveOrderForDelivery = useMemo(() => {
     if (!task || task.status !== "pending") return false;

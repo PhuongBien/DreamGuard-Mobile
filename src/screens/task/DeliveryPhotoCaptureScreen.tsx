@@ -271,20 +271,18 @@ export default function DeliveryPhotoCaptureScreen({
             uploadedUrls,
           );
         } else {
-          const evidenceUrlsForDelivered = [...uploadedUrls];
-          if (needsCodReceipt && codPaymentUri) {
-            const paymentUrl = await uploadImageToCloudinary(codPaymentUri);
-            if (!paymentUrl)
-              throw new Error("Could not upload COD payment proof.");
-            evidenceUrlsForDelivered.push(paymentUrl);
-          }
-
+          // Step 4:
+          // - ShippingTask -> delivered-for-tradeIn (evidenceUrls required by backend)
+          // NOTE: Do not update TradeInOrder status here. Backend flow for trade-in
+          // delivery is driven by ShippingTask status update.
           await DeliveryTaskService.markDeliveredForTradeIn(
             shippingTaskId,
-            evidenceUrlsForDelivered,
+            uploadedUrls,
           );
-          if (tradeInOrderId) {
-            await TradeInOrderService.updateDelivered(tradeInOrderId);
+
+          // Step 5: COD payment proof is uploaded to the TradeInOrder (not mixed into ShippingTask evidenceUrls)
+          if (needsCodReceipt && codPaymentUri && tradeInOrderId) {
+            await TradeInOrderService.uploadImage(tradeInOrderId, codPaymentUri);
           }
         }
       } else {
@@ -491,31 +489,70 @@ export default function DeliveryPhotoCaptureScreen({
                       <View style={styles.damagedControls}>
                         <View style={styles.qtyRow}>
                           <Text style={styles.qtyLabel}>Quantity</Text>
-                          <TextInput
-                            style={[
-                              styles.qtyInput,
-                              !active && styles.qtyInputDisabled,
-                            ]}
-                            value={String(qty)}
-                            editable={active && !loading}
-                            keyboardType="number-pad"
-                            onChangeText={(txt) => {
-                              const raw = Number(txt.replace(/[^\d]/g, ""));
-                              const next = Number.isFinite(raw) ? raw : 1;
-                              const clamped = Math.min(
-                                Math.max(1, next),
-                                maxQty,
-                              );
-                              setDamagedDraftByItemId((prev) => ({
-                                ...prev,
-                                [product.id]: {
-                                  ...draft,
-                                  selected: true,
-                                  damagedQuantity: clamped,
-                                },
-                              }));
-                            }}
-                          />
+                          
+                          <View style={styles.qtyStepper}>
+                            <TouchableOpacity
+                              style={[styles.qtyStepperBtn, (!active || qty <= 1 || loading) && styles.qtyStepperBtnDisabled]}
+                              activeOpacity={0.8}
+                              disabled={!active || qty <= 1 || loading}
+                              onPress={() => {
+                                setDamagedDraftByItemId((prev) => ({
+                                  ...prev,
+                                  [product.id]: {
+                                    ...draft,
+                                    selected: true,
+                                    damagedQuantity: Math.max(1, qty - 1),
+                                  },
+                                }));
+                              }}
+                            >
+                              <Ionicons name="remove" size={20} color={(!active || qty <= 1 || loading) ? Colors.gray400 : Colors.primary700} />
+                            </TouchableOpacity>
+
+                            <TextInput
+                              style={[
+                                styles.qtyInput,
+                                !active && styles.qtyInputDisabled,
+                              ]}
+                              value={String(qty)}
+                              editable={active && !loading}
+                              keyboardType="number-pad"
+                              onChangeText={(txt) => {
+                                const raw = Number(txt.replace(/[^\d]/g, ""));
+                                const next = Number.isFinite(raw) ? raw : 1;
+                                const clamped = Math.min(
+                                  Math.max(1, next),
+                                  maxQty,
+                                );
+                                setDamagedDraftByItemId((prev) => ({
+                                  ...prev,
+                                  [product.id]: {
+                                    ...draft,
+                                    selected: true,
+                                    damagedQuantity: clamped,
+                                  },
+                                }));
+                              }}
+                            />
+
+                            <TouchableOpacity
+                              style={[styles.qtyStepperBtn, (!active || qty >= maxQty || loading) && styles.qtyStepperBtnDisabled]}
+                              activeOpacity={0.8}
+                              disabled={!active || qty >= maxQty || loading}
+                              onPress={() => {
+                                setDamagedDraftByItemId((prev) => ({
+                                  ...prev,
+                                  [product.id]: {
+                                    ...draft,
+                                    selected: true,
+                                    damagedQuantity: Math.min(maxQty, qty + 1),
+                                  },
+                                }));
+                              }}
+                            >
+                              <Ionicons name="add" size={20} color={(!active || qty >= maxQty || loading) ? Colors.gray400 : Colors.primary700} />
+                            </TouchableOpacity>
+                          </View>
                         </View>
 
                         {/* <Text style={styles.qtyLabel}>Lý do sản phẩm</Text>
@@ -898,7 +935,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   qtyInput: {
-    width: 88,
+    width: 60,
     height: 40,
     borderRadius: 10,
     borderWidth: 1,
@@ -909,6 +946,22 @@ const styles = StyleSheet.create({
     fontSize: Typography.base,
     fontWeight: "700",
     textAlign: "center",
+  },
+  qtyStepper: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  qtyStepperBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  qtyStepperBtnDisabled: {
+    opacity: 0.5,
   },
   qtyInputDisabled: {
     opacity: 0.45,
