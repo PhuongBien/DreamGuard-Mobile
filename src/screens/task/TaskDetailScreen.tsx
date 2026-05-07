@@ -64,6 +64,7 @@ const NEXT_STATUSES: Record<TaskStatus, TaskStatus[]> = {
 const TASK_IMAGE_GROUP_LABELS = {
   before: "Imgae Before",
   after: "Images After",
+  orderReference: "Order reference",
   payment: "Payment / COD proof",
   other: "Other images",
 } as const;
@@ -273,7 +274,9 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     (kind: "checkin" | "checkout", sourceTask: Task) => {
       const preferredType = kind === "checkin" ? "before" : "after";
       const urls = [...(sourceTask?.photos || [])]
-        .filter((p) => p?.type === preferredType)
+        .filter(
+          (p) => p?.type === preferredType && p?.source !== "order_reference",
+        )
         .sort((a, b) => {
           const at = a?.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
           const bt = b?.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
@@ -384,6 +387,11 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           pendingEvidenceAttemptsRef.current = 0;
         } catch (e: any) {
           Alert.alert("Error", e?.message || "Unable to update status.");
+          // Stop the auto-loop on hard failures (e.g. 500).
+          setPendingEvidenceAction(null);
+          setPendingEvidenceTaskId(null);
+          setPendingEvidenceBaselineUrls([]);
+          pendingEvidenceAttemptsRef.current = 0;
         } finally {
           setStatusLoading(false);
         }
@@ -683,14 +691,23 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
 
     const sections = [
       {
+        key: "order_reference",
+        title: TASK_IMAGE_GROUP_LABELS.orderReference,
+        items: photos.filter((photo) => photo.source === "order_reference"),
+      },
+      {
         key: "before",
         title: TASK_IMAGE_GROUP_LABELS.before,
-        items: photos.filter((photo) => photo.type === "before"),
+        items: photos.filter(
+          (photo) => photo.type === "before" && photo.source !== "order_reference",
+        ),
       },
       {
         key: "after",
         title: TASK_IMAGE_GROUP_LABELS.after,
-        items: photos.filter((photo) => photo.type === "after"),
+        items: photos.filter(
+          (photo) => photo.type === "after" && photo.source !== "order_reference",
+        ),
       },
       {
         key: "payment",
@@ -702,6 +719,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         title: TASK_IMAGE_GROUP_LABELS.other,
         items: photos.filter(
           (photo) =>
+            photo.source !== "order_reference" &&
             photo.type !== "before" &&
             photo.type !== "after" &&
             photo.type !== "payment",
@@ -728,7 +746,9 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     (kind: "checkin" | "checkout") => {
       const preferredType = kind === "checkin" ? "before" : "after";
       const preferred = (dedupedSortedPhotoList || [])
-        .filter((p) => p?.type === preferredType)
+        .filter(
+          (p) => p?.type === preferredType && p?.source !== "order_reference",
+        )
         .map((p) => String(p?.url ?? "").trim())
         .filter(Boolean);
 
@@ -742,7 +762,9 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     (kind: "checkin" | "checkout", sourceTask: Task) => {
       const preferredType = kind === "checkin" ? "before" : "after";
       const preferred = (sourceTask?.photos || [])
-        .filter((p) => p?.type === preferredType)
+        .filter(
+          (p) => p?.type === preferredType && p?.source !== "order_reference",
+        )
         .map((p) => String(p?.url ?? "").trim())
         .filter(Boolean);
       return Array.from(new Set(preferred)).slice(0, 5);
@@ -887,7 +909,41 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
             : latestTask.status;
 
       if (latestEffectiveStatus === "pending") {
-        const baseline = getEvidenceUrlsFromTask("checkin", latestTask);
+        const beforeEvidenceUrls = getEvidenceUrlsFromTask(
+          "checkin",
+          latestTask,
+        );
+
+        // If we already have Before photos, don't force recapture.
+        // Instead, try to submit evidence directly.
+        if (beforeEvidenceUrls.length) {
+          try {
+            await checkInWithEvidence(task.id, beforeEvidenceUrls);
+            return;
+          } catch (e: any) {
+            Alert.alert(
+              "Check-in failed",
+              e?.message || "Unable to check in with the current photos.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Open camera",
+                  onPress: () => {
+                    setPendingEvidenceAction("checkin");
+                    setPendingEvidenceTaskId(task.id);
+                    setPendingEvidenceBaselineUrls(beforeEvidenceUrls);
+                    handleOpenPhotoUpload("before", {
+                      openCameraImmediately: true,
+                    });
+                  },
+                },
+              ],
+            );
+            return;
+          }
+        }
+
+        const baseline = beforeEvidenceUrls;
         Alert.alert(
           "Photo required — check-in",
           "You must take a new Before photo at the location to check in.",
@@ -1407,7 +1463,10 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
 
           {!taskSupersededAwaitingReassign &&
             showPhotoReminder &&
-            !(task.photos || []).some((photo) => photo.type === "after") && (
+            !(task.photos || []).some(
+              (photo) =>
+                photo.type === "after" && photo.source !== "order_reference",
+            ) && (
               <View style={styles.photoReminder}>
                 <Ionicons name="camera" size={20} color={Colors.primary500} />
                 <Text style={styles.photoReminderText}>

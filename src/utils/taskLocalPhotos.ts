@@ -18,12 +18,20 @@ function urlKey(url: string): string {
   return normalizeUrl(url).split("?")[0];
 }
 
+function normalizePhotoType(value?: string): TaskPhoto["type"] | null {
+  const v = normalizeUrl(value).toLowerCase();
+  if (v === "before" || v === "after" || v === "payment" || v === "evidence") {
+    return v;
+  }
+  return null;
+}
+
 function storageKey(taskId: string): string {
   return `${STORAGE_PREFIX}:${normalizeTaskId(taskId)}`;
 }
 
 type StoredPhoto = Pick<TaskPhoto, "url" | "type" | "uploadedAt"> &
-  Partial<Pick<TaskPhoto, "uploadedBy" | "captureStage">>;
+  Partial<Pick<TaskPhoto, "uploadedBy" | "captureStage" | "source">>;
 
 function isStoredPhoto(value: any): value is StoredPhoto {
   const url = normalizeUrl(value?.url);
@@ -54,10 +62,11 @@ export async function recallTaskLocalPhotos(taskId: string): Promise<TaskPhoto[]
       out.push({
         id: `local_${tid}_${key}`,
         url,
-        type: String(item.type),
+        type: item.type as TaskPhoto["type"],
         uploadedAt: toIsoUtcOrEmpty(item.uploadedAt) || "",
-        uploadedBy: item.uploadedBy ? String(item.uploadedBy) : undefined,
-        captureStage: item.captureStage ? String(item.captureStage) : undefined,
+        uploadedBy: item.uploadedBy ? String(item.uploadedBy) : "",
+        captureStage: item.captureStage as TaskPhoto["captureStage"],
+        source: item.source as TaskPhoto["source"],
       });
     }
 
@@ -70,11 +79,11 @@ export async function recallTaskLocalPhotos(taskId: string): Promise<TaskPhoto[]
 export async function persistTaskLocalPhoto(
   taskId: string,
   photo: Pick<TaskPhoto, "url" | "type" | "uploadedAt"> &
-    Partial<Pick<TaskPhoto, "uploadedBy" | "captureStage">>,
+    Partial<Pick<TaskPhoto, "uploadedBy" | "captureStage" | "source">>,
 ): Promise<void> {
   const tid = normalizeTaskId(taskId);
   const url = normalizeUrl(photo?.url);
-  const type = normalizeUrl(photo?.type);
+  const type = normalizePhotoType(String(photo?.type ?? ""));
   if (!tid || !url || !type) return;
 
   const entry: StoredPhoto = {
@@ -83,6 +92,7 @@ export async function persistTaskLocalPhoto(
     uploadedAt: toIsoUtcOrEmpty(photo.uploadedAt) || new Date().toISOString(),
     uploadedBy: photo.uploadedBy,
     captureStage: photo.captureStage,
+    source: photo.source,
   };
 
   try {

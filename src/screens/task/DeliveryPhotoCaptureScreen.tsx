@@ -282,7 +282,15 @@ export default function DeliveryPhotoCaptureScreen({
 
           // Step 5: COD payment proof is uploaded to the TradeInOrder (not mixed into ShippingTask evidenceUrls)
           if (needsCodReceipt && codPaymentUri && tradeInOrderId) {
-            await TradeInOrderService.uploadImage(tradeInOrderId, codPaymentUri);
+            try {
+              await TradeInOrderService.uploadImage(tradeInOrderId, codPaymentUri);
+            } catch (e) {
+              // Delivery already succeeded; avoid surfacing as a full failure.
+              Alert.alert(
+                "COD proof upload failed",
+                "Delivery was confirmed, but COD proof could not be uploaded. Please try uploading the COD proof again.",
+              );
+            }
           }
         }
       } else {

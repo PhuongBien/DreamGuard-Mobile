@@ -353,6 +353,9 @@ const normalizePhotoList = (
             ? ""
             : toIsoUtcOrEmpty(item?.createdAt ?? item?.uploadedAt),
         uploadedBy: String(item?.uploadedBy ?? fallbackUploadedBy ?? ""),
+        source: String(item?.source ?? "").trim()
+          ? (String(item.source).trim() as TaskPhoto["source"])
+          : "service_evidence",
       } as TaskPhoto;
     })
     .filter((item): item is TaskPhoto => !!item);
@@ -458,12 +461,13 @@ const normalizeTask = (input: unknown): Task => {
   const tagUrls = (
     items: unknown,
     type: "before" | "after" | "evidence",
+    source?: TaskPhoto["source"],
   ): unknown[] => {
     if (!Array.isArray(items)) return [];
     return items.map((entry) => {
       if (typeof entry === "string") {
         const url = entry.trim();
-        return url ? { url, type } : null;
+        return url ? { url, type, source } : null;
       }
       // Keep backend objects intact (they may already include type/description).
       return entry;
@@ -472,24 +476,24 @@ const normalizeTask = (input: unknown): Task => {
 
   const rawPhotoItems: unknown[] = [
     // Common backend field: array of image URLs captured at check-in.
-    ...tagUrls(raw.serviceOrderImageUrl, "before"),
+    ...tagUrls(raw.serviceOrderImageUrl, "before", "order_reference"),
 
     // Evidence lists can contain rich objects with type/description from upload endpoint.
     ...(Array.isArray(raw.serviceEvidences) ? raw.serviceEvidences : []),
     ...(Array.isArray(raw.evidences) ? raw.evidences : []),
 
     // Common backend fields: checkout / after images.
-    ...tagUrls(raw.checkOutImages, "after"),
-    ...tagUrls(raw.checkoutImages, "after"),
-    ...tagUrls(raw.checkOutImageUrls, "after"),
-    ...tagUrls(raw.checkoutImageUrls, "after"),
-    ...tagUrls(raw.afterImages, "after"),
-    ...tagUrls(raw.afterImageUrls, "after"),
+    ...tagUrls(raw.checkOutImages, "after", "service_evidence"),
+    ...tagUrls(raw.checkoutImages, "after", "service_evidence"),
+    ...tagUrls(raw.checkOutImageUrls, "after", "service_evidence"),
+    ...tagUrls(raw.checkoutImageUrls, "after", "service_evidence"),
+    ...tagUrls(raw.afterImages, "after", "service_evidence"),
+    ...tagUrls(raw.afterImageUrls, "after", "service_evidence"),
 
     // Nested checkout payloads (arrays of urls or objects).
-    ...tagUrls(checkOutPayload.images, "after"),
+    ...tagUrls(checkOutPayload.images, "after", "service_evidence"),
     ...(Array.isArray(checkOutPayload.evidences) ? checkOutPayload.evidences : []),
-    ...tagUrls(checkOutPayload.imageUrls, "after"),
+    ...tagUrls(checkOutPayload.imageUrls, "after", "service_evidence"),
     ...(Array.isArray(checkOutPayload.photos) ? checkOutPayload.photos : []),
     ...(Array.isArray(checkOutPayload.files) ? checkOutPayload.files : []),
   ];

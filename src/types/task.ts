@@ -43,6 +43,11 @@ export interface TaskPhoto {
   uploadedAt: string;
   uploadedBy: string;
   captureStage?: DeliveryEvidenceStage;
+  /**
+   * Distinguish where the photo came from so UI/business rules can exclude
+   * order reference images from check-in/out evidence checks.
+   */
+  source?: "order_reference" | "service_evidence" | "local_capture";
 }
 
 export interface TaskNote {

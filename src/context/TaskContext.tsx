@@ -557,6 +557,7 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
         uploadedAt: new Date().toISOString(),
         uploadedBy: photoData.uploadedBy,
         captureStage: photoData.captureStage,
+        source: "local_capture",
         fileName: photoData.fileName,
         mimeType: photoData.mimeType,
       };
@@ -612,6 +613,7 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
       uploadedAt: new Date().toISOString(),
       uploadedBy: photoData.uploadedBy,
       captureStage: photoData.captureStage,
+      source: "local_capture",
     };
 
     await persistTaskPhotoUploadedAt(
@@ -894,8 +896,16 @@ function mergePhotos(localPhotos: TaskPhoto[], remotePhotos: TaskPhoto[]) {
       continue;
     }
 
+    const resolvedType =
+      (existing.type === "evidence" || !existing.type) && photo.type !== "evidence"
+        ? photo.type
+        : existing.type;
+    const resolvedSource = existing.source || photo.source;
+
     byUrl.set(key, {
       ...existing,
+      type: resolvedType,
+      source: resolvedSource,
       captureStage: existing.captureStage || photo.captureStage,
       uploadedBy: existing.uploadedBy || photo.uploadedBy,
       uploadedAt: preferLocalUploadedTimestamp(photo.uploadedAt, existing.uploadedAt),
