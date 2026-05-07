@@ -707,13 +707,38 @@ export const TaskProvider = ({ children }: { children: ReactNode }) => {
     updateLocalTask(updated);
   };
 
-  const completeTask = async (taskId: string, payload?: { evidenceUrl?: string }) => {
+  const completeTask = async (
+    taskId: string,
+    payload?: { evidenceUrl?: string },
+  ) => {
     if (isDeliveryStaff) {
       throw new Error("Complete action is not used for delivery tasks");
     }
 
+    const existing = tasksRef.current.find((task) => task.id === taskId);
     const updated = await TaskService.completeTask(taskId, payload);
-    updateLocalTask(updated);
+    const hydrated = await hydrateTaskPhotosWithPersistedUploadedAt(updated);
+    const localPhotos = await recallTaskLocalPhotos(taskId);
+
+    const mergedTask: Task = existing
+      ? {
+          ...hydrated,
+          photos: mergePhotos(
+            mergePhotos(localPhotos, existing.photos || []),
+            hydrated.photos || [],
+          ),
+          relatedImageUrls: mergeImageUrls(
+            existing.relatedImageUrls || [],
+            hydrated.relatedImageUrls || [],
+          ),
+        }
+      : hydrated;
+
+    if (!existing && localPhotos.length) {
+      mergedTask.photos = mergePhotos(localPhotos, mergedTask.photos || []);
+    }
+
+    updateLocalTask(mergedTask, { skipHydratePhotos: true });
   };
 
   const startDelivery = async (taskId: string, evidenceUrls: string[] = []) => {

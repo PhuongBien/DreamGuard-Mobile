@@ -114,31 +114,23 @@ function buildDedupedSortedPhotosFromTask(
     const key = rawUrl.split("?")[0];
     if (seen.has(key)) continue;
     seen.add(key);
-    
+
     const bestType = bestTypeByKey.get(key) || p.type;
     out.push({ ...p, url: rawUrl, type: bestType as any });
   }
   return out;
 }
 
-function guessEvidenceUrlFromTask(source: Task | null | undefined): string {
+function getPaymentEvidenceUrlsFromTask(source: Task | null | undefined): string[] {
   const list = buildDedupedSortedPhotosFromTask(source);
-  const payment = list
-    .filter((p) => p?.type === "payment")
-    .map((p) => String(p?.url ?? "").trim())
-    .filter(Boolean);
-  if (payment.length) return payment[0]!;
-
-  const after = list
-    .filter((p) => p?.type === "after")
-    .map((p) => String(p?.url ?? "").trim())
-    .filter(Boolean);
-  if (after.length) return after[0]!;
-
-  const any = list
-    .map((p) => String(p?.url ?? "").trim())
-    .filter(Boolean);
-  return any[0] || "";
+  return Array.from(
+    new Set(
+      list
+        .filter((p) => p?.type === "payment")
+        .map((p) => String(p?.url ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
 }
 
 const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string }> = {
@@ -191,13 +183,10 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   /** After successful reschedule: BE may spin a new task row; hide actions until manager assigns. */
   const [awaitingManagerReassignUi, setAwaitingManagerReassignUi] =
     useState(false);
-  const [completeEvidenceModalVisible, setCompleteEvidenceModalVisible] =
-    useState(false);
-  const [completeEvidenceUrl, setCompleteEvidenceUrl] = useState("");
   const [viewerVisible, setViewerVisible] = useState(false);
   const [currentImage, setCurrentImage] = useState<string | null>(null);
   const [pendingEvidenceAction, setPendingEvidenceAction] = useState<
-    null | "checkin" | "checkout"
+    null | "checkin" | "checkout" | "complete"
   >(null);
   const [pendingEvidenceTaskId, setPendingEvidenceTaskId] = useState<
     string | null
@@ -339,7 +328,9 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           (pendingEvidenceAction === "checkin" &&
             latestEffectiveStatus !== "pending") ||
           (pendingEvidenceAction === "checkout" &&
-            latestEffectiveStatus !== "in_progress")
+            latestEffectiveStatus !== "in_progress") ||
+          (pendingEvidenceAction === "complete" &&
+            latestEffectiveStatus === "completed")
         ) {
           setPendingEvidenceAction(null);
           setPendingEvidenceTaskId(null);
@@ -347,10 +338,10 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           return;
         }
 
-        const currentUrls = getEvidenceUrlsFromTask(
-          pendingEvidenceAction,
-          latestTask,
-        );
+        const currentUrls =
+          pendingEvidenceAction === "complete"
+            ? getPaymentEvidenceUrlsFromTask(latestTask)
+            : getEvidenceUrlsFromTask(pendingEvidenceAction, latestTask);
         const baseline = pendingEvidenceBaselineUrls || [];
         const baselineKeySet = new Set(baseline.map((u) => u.split("?")[0]));
         const baselineFullSet = new Set(baseline);
@@ -377,9 +368,14 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           setStatusLoading(true);
           if (pendingEvidenceAction === "checkin") {
             await checkInWithEvidence(taskId, newEvidenceUrls);
-          } else {
+          } else if (pendingEvidenceAction === "checkout") {
             await checkOutWithEvidence(taskId, newEvidenceUrls);
             setShowPhotoReminder(true);
+          } else {
+            await completeTask(taskId, {
+              evidenceUrl: newEvidenceUrls[0] || "",
+            });
+            await getTaskById(taskId, { forceRefresh: true });
           }
           setPendingEvidenceAction(null);
           setPendingEvidenceTaskId(null);
@@ -411,6 +407,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       getEvidenceUrlsFromTask,
       checkInWithEvidence,
       checkOutWithEvidence,
+      completeTask,
       task,
     ]),
   );
@@ -742,22 +739,6 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       .filter((section) => section.items.length > 0);
   }, [stablePhotoList]);
 
-  const getEvidenceUrlsFor = useCallback(
-    (kind: "checkin" | "checkout") => {
-      const preferredType = kind === "checkin" ? "before" : "after";
-      const preferred = (dedupedSortedPhotoList || [])
-        .filter(
-          (p) => p?.type === preferredType && p?.source !== "order_reference",
-        )
-        .map((p) => String(p?.url ?? "").trim())
-        .filter(Boolean);
-
-      // Keep payload small but sufficient.
-      return Array.from(new Set(preferred)).slice(0, 5);
-    },
-    [dedupedSortedPhotoList],
-  );
-
   const getEvidenceUrlsForTask = useCallback(
     (kind: "checkin" | "checkout", sourceTask: Task) => {
       const preferredType = kind === "checkin" ? "before" : "after";
@@ -853,46 +834,6 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     rescheduleTimePart,
     rescheduleReason,
   ]);
-
-  const submitCompleteWithEvidence = useCallback(async () => {
-    if (!task) return;
-
-    let fresh: Task;
-    try {
-      fresh =
-        (await getTaskById(task.id, { forceRefresh: true })) ?? task;
-    } catch {
-      fresh = task;
-    }
-
-    const isCod =
-      String(fresh.paymentMethod ?? "").trim().toLowerCase() === "cod";
-    const evidenceUrlResolved = completeEvidenceUrl.trim();
-    const fallbackEvidenceUrl = guessEvidenceUrlFromTask(fresh).trim();
-    const finalEvidenceUrl = evidenceUrlResolved || fallbackEvidenceUrl;
-
-    // COD: allow completing with either manually entered URL OR uploaded payment photo.
-    if (isCod && !finalEvidenceUrl) {
-      Alert.alert(
-        "Missing evidence",
-        "COD payment requires evidence (upload a payment photo or provide evidence URL) before completing.",
-      );
-      return;
-    }
-
-    try {
-      setStatusLoading(true);
-      await completeTask(task.id, {
-        evidenceUrl: finalEvidenceUrl,
-      });
-      setCompleteEvidenceModalVisible(false);
-      setCompleteEvidenceUrl("");
-    } catch (e: any) {
-      Alert.alert("Error", e?.message || "Unable to complete task.");
-    } finally {
-      setStatusLoading(false);
-    }
-  }, [completeEvidenceUrl, completeTask, getTaskById, task]);
 
   const handlePrimaryAction = async () => {
     if (!task) return;
@@ -997,48 +938,15 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           return;
         }
 
-        const afterEvidenceUrls = getEvidenceUrlsForTask("checkout", latestTask);
-        if (!afterEvidenceUrls.length) {
-          Alert.alert(
-            "Photo required — complete",
-            "Take at least one After photo before you can complete.",
-            [
-              { text: "Not now", style: "cancel" },
-              {
-                text: "Open camera",
-                onPress: () =>
-                  handleOpenPhotoUpload("after", {
-                    openCameraImmediately: true,
-                  }),
-              },
-            ],
-          );
-          return;
-        }
-
-        const isCod =
-          String(latestTask.paymentMethod ?? task.paymentMethod ?? "")
-            .trim()
-            .toLowerCase() === "cod";
-        if (isCod) {
-          const refreshedForCod =
-            (await getTaskById(task.id, { forceRefresh: true })) ?? latestTask;
-
-          const list = buildDedupedSortedPhotosFromTask(refreshedForCod);
-          const paymentPhoto = list.find((p) => p?.type === "payment" && String(p?.url ?? "").trim() !== "");
-          
-          if (paymentPhoto && paymentPhoto.url) {
-            await completeTask(task.id, { evidenceUrl: paymentPhoto.url });
-            return;
-          }
-
-          const suggested = guessEvidenceUrlFromTask(refreshedForCod);
-          setCompleteEvidenceUrl(suggested);
-          setCompleteEvidenceModalVisible(true);
-          return;
-        }
-
-        await completeTask(task.id, { evidenceUrl: "" });
+        const refreshedForComplete =
+          (await getTaskById(task.id, { forceRefresh: true })) ?? latestTask;
+        const baseline = getPaymentEvidenceUrlsFromTask(refreshedForComplete);
+        setPendingEvidenceAction("complete");
+        setPendingEvidenceTaskId(task.id);
+        setPendingEvidenceBaselineUrls(baseline);
+        handleOpenPhotoUpload("payment", {
+          openCameraImmediately: true,
+        });
       } else if (latestEffectiveStatus === "checked_in") {
         // Processing is handled by the dedicated button (shown in parallel with Cancelled).
         return;
@@ -1762,80 +1670,6 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         </View>
       </Modal>
 
-      <Modal
-        visible={completeEvidenceModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCompleteEvidenceModalVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Complete (COD)</Text>
-            <Text style={styles.modalSubTitleCompact}>
-              Add a payment proof URL or capture a payment photo — same step as
-              confirming payment.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.codCameraRow}
-              onPress={() => {
-                setCompleteEvidenceModalVisible(false);
-                handleOpenPhotoUpload("payment", {
-                  openCameraImmediately: true,
-                });
-              }}
-              activeOpacity={0.85}
-              disabled={statusLoading}
-            >
-              <Ionicons
-                name="camera-outline"
-                size={22}
-                color={Colors.primary700}
-              />
-              <Text style={styles.codCameraRowText}>Take payment photo</Text>
-            </TouchableOpacity>
-
-            {/* <Text style={styles.modalFieldLabelMuted}>Evidence URL</Text>
-            <TextInput
-              value={completeEvidenceUrl}
-              onChangeText={setCompleteEvidenceUrl}
-              placeholder="Evidence URL"
-              placeholderTextColor={Colors.gray400}
-              style={[styles.modalInput, styles.modalCodUrlInput]}
-              autoCapitalize="none"
-              autoCorrect={false}
-            /> */}
-
-            <View style={styles.modalActionsRow}>
-              <TouchableOpacity
-                style={styles.modalSecondaryBtn}
-                onPress={() => setCompleteEvidenceModalVisible(false)}
-                activeOpacity={0.85}
-                disabled={statusLoading}
-              >
-                <Text style={styles.modalSecondaryText}>Close</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.bottomActionButton,
-                  statusLoading && styles.bottomActionButtonDisabled,
-                ]}
-                onPress={submitCompleteWithEvidence}
-                activeOpacity={0.85}
-                disabled={statusLoading}
-              >
-                {statusLoading ? (
-                  <ActivityIndicator color={Colors.white} />
-                ) : (
-                  <Text style={styles.modalDangerText}>Complete</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
       <Modal visible={viewerVisible} transparent animationType="fade">
         <View style={styles.viewerBackdrop}>
           <TouchableOpacity
@@ -2365,36 +2199,6 @@ const styles = StyleSheet.create({
     fontSize: Typography.sm,
     fontWeight: "500",
     lineHeight: 18,
-  },
-  codCameraRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    marginTop: Spacing.sm,
-    marginBottom: Spacing.sm,
-    paddingVertical: 12,
-    paddingHorizontal: Spacing.base,
-    backgroundColor: "#E8F1FA",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#BFDBFE",
-  },
-  codCameraRowText: {
-    color: "#163667",
-    fontSize: Typography.base,
-    fontWeight: "700",
-  },
-  modalFieldLabelMuted: {
-    marginTop: Spacing.xs,
-    color: "#35577F",
-    fontSize: Typography.xs,
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  modalCodUrlInput: {
-    minHeight: 56,
-    marginTop: 4,
   },
   rescheduleDatetimeRow: {
     flexDirection: "row",
