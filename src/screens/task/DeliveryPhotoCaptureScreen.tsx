@@ -19,7 +19,6 @@ import { Task } from "../../types";
 import { TaskStackParamList } from "../../types/navigation";
 import { uploadImageToCloudinary } from "../../utils/cloudinary";
 import { DeliveryTaskService } from "../../services/delivery-task.service";
-import { TradeInOrderService } from "../../services/trade-in-order.service";
 import {
   BorderRadius,
   Colors,
@@ -82,7 +81,6 @@ export default function DeliveryPhotoCaptureScreen({
     shippingTaskId,
     mode,
     tradeInFlow,
-    tradeInOrderId,
     requiresCodPaymentEvidence = false,
   } = route.params;
   const { tasks, markDelivered, markReturned, addTaskPhoto } = useTask();
@@ -271,27 +269,22 @@ export default function DeliveryPhotoCaptureScreen({
             uploadedUrls,
           );
         } else {
-          // Step 4:
-          // - ShippingTask -> delivered-for-tradeIn (evidenceUrls required by backend)
-          // NOTE: Do not update TradeInOrder status here. Backend flow for trade-in
-          // delivery is driven by ShippingTask status update.
+          // Trade-in "delivered" requires evidenceUrls.
+          // Business requirement: include BOTH delivery proof and COD payment proof (if required)
+          // in the same ShippingTask delivered-for-tradeIn request.
+          const evidenceUrlsForDelivered = [...uploadedUrls];
+          if (needsCodReceipt && codPaymentUri) {
+            const paymentUrl = await uploadImageToCloudinary(codPaymentUri);
+            if (!paymentUrl) {
+              throw new Error("Could not upload COD payment proof.");
+            }
+            evidenceUrlsForDelivered.push(paymentUrl);
+          }
+
           await DeliveryTaskService.markDeliveredForTradeIn(
             shippingTaskId,
-            uploadedUrls,
+            evidenceUrlsForDelivered,
           );
-
-          // Step 5: COD payment proof is uploaded to the TradeInOrder (not mixed into ShippingTask evidenceUrls)
-          if (needsCodReceipt && codPaymentUri && tradeInOrderId) {
-            try {
-              await TradeInOrderService.uploadImage(tradeInOrderId, codPaymentUri);
-            } catch (e) {
-              // Delivery already succeeded; avoid surfacing as a full failure.
-              Alert.alert(
-                "COD proof upload failed",
-                "Delivery was confirmed, but COD proof could not be uploaded. Please try uploading the COD proof again.",
-              );
-            }
-          }
         }
       } else {
         for (const imageUri of imageUris) {

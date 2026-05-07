@@ -187,17 +187,6 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [currentImage, setCurrentImage] = useState<string | null>(null);
 
-  // Post-delivery unhappy-case processing (after RETURNED / FORCED_CANCELLED)
-  const [processModalVisible, setProcessModalVisible] = useState(false);
-  const [processMode, setProcessMode] = useState<"returned" | "exchange">(
-    "returned",
-  );
-  const [processReasonNote, setProcessReasonNote] = useState<string>("");
-  const [processNewStaffId, setProcessNewStaffId] = useState<string>("");
-  const [processProductVariantId, setProcessProductVariantId] =
-    useState<string>("");
-  const [processEvidenceUris, setProcessEvidenceUris] = useState<string[]>([]);
-
   // Shipping schedule (ShippingTask.shippingDate) — required before Processing on BE
   const [scheduleModalVisible, setScheduleModalVisible] = useState(false);
   const [scheduleDate, setScheduleDate] = useState<string>(""); // YYYY-MM-DD
@@ -522,29 +511,6 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
     }
   }, []);
 
-  const handleCaptureProcessEvidence = useCallback(async () => {
-    try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert(
-          "Missing camera permission",
-          "Camera permission is required to capture evidence.",
-        );
-        return;
-      }
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.8,
-      });
-      if (!result.canceled && result.assets?.length > 0) {
-        setProcessEvidenceUris((prev) => [...prev, result.assets[0].uri]);
-      }
-    } catch (err: any) {
-      Alert.alert("Camera error", err?.message);
-    }
-  }, []);
-
   const handleStartDelivering = async () => {
     if (!activeTaskId || !order) return;
     if (!isTradeInOrderInProcessing(order.status)) {
@@ -588,81 +554,7 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
     }
   };
 
-  const openProcessModal = useCallback(
-    (mode: "returned" | "exchange") => {
-      setProcessMode(mode);
-      setProcessReasonNote("");
-      setProcessNewStaffId("");
-      setProcessProductVariantId("");
-      setProcessEvidenceUris([]);
-      setProcessModalVisible(true);
-    },
-    [],
-  );
-
-  const handleSubmitPostReturnProcess = useCallback(async () => {
-    if (!activeTaskId) return;
-    if (!processProductVariantId.trim()) {
-      Alert.alert("Missing productVariantId", "Please input productVariantId.");
-      return;
-    }
-    if (!processReasonNote.trim()) {
-      Alert.alert("Missing note", "Please input a note for this action.");
-      return;
-    }
-    if (!processEvidenceUris.length) {
-      Alert.alert(
-        "Missing evidence",
-        "Please capture at least one evidence photo.",
-      );
-      return;
-    }
-    if (processMode === "exchange" && !processNewStaffId.trim()) {
-      Alert.alert("Missing newStaffId", "Please input newStaffId.");
-      return;
-    }
-
-    try {
-      setActionLoading(true);
-      const evidenceUrls: string[] = [];
-      for (const uri of processEvidenceUris) {
-        const uploaded = await uploadImageToCloudinary(uri);
-        if (uploaded) evidenceUrls.push(uploaded);
-      }
-      if (!evidenceUrls.length) throw new Error("Upload evidence failed");
-
-      if (processMode === "returned") {
-        await DeliveryTaskService.processReturnedForTradeIn(activeTaskId, {
-          damageNote: processReasonNote.trim(),
-          evidenceUrls,
-          productVariantId: processProductVariantId.trim(),
-        });
-      } else {
-        await DeliveryTaskService.processExchangeForTradeIn(activeTaskId, {
-          newStaffId: processNewStaffId.trim(),
-          exchangeNote: processReasonNote.trim(),
-          evidenceUrls,
-          productVariantId: processProductVariantId.trim(),
-        });
-      }
-
-      setProcessModalVisible(false);
-      await loadAll();
-      Alert.alert("Success", "Submitted successfully.");
-    } catch (err: any) {
-      Alert.alert("Error", err?.message ?? "Submit failed");
-    } finally {
-      setActionLoading(false);
-    }
-  }, [
-    activeTaskId,
-    processEvidenceUris,
-    processMode,
-    processNewStaffId,
-    processProductVariantId,
-    processReasonNote,
-    loadAll,
-  ]);
+  // Post-return processing is handled by managers; hidden on staff app.
 
   if (loading) {
     return (
@@ -1183,44 +1075,7 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
           </View>
         )}
 
-        {activeTaskId && (taskStatus === "returned" || taskStatus === "cancelled") ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>POST-RETURN PROCESSING</Text>
-            <Text style={styles.descriptionText}>
-              Use these actions after the task is returned / forced-cancelled to
-              process the trade-in flow (returned/exchange).
-            </Text>
-            <View style={styles.dualActionWrap}>
-              <TouchableOpacity
-                style={[styles.secondaryActionButton, styles.dualActionButton]}
-                activeOpacity={0.85}
-                disabled={actionLoading}
-                onPress={() => openProcessModal("returned")}
-              >
-                <Ionicons
-                  name="return-down-back-outline"
-                  size={16}
-                  color={Colors.error}
-                />
-                <Text style={styles.secondaryActionText}>Process returned</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.bottomActionButton, styles.dualActionButton]}
-                activeOpacity={0.85}
-                disabled={actionLoading}
-                onPress={() => openProcessModal("exchange")}
-              >
-                <Ionicons
-                  name="swap-horizontal-outline"
-                  size={16}
-                  color={Colors.white}
-                />
-                <Text style={styles.bottomActionText}>Process exchange</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : null}
+        {null}
 
         {deliveryImageUrls.length > 0 ? (
           <View style={styles.card}>
@@ -1581,6 +1436,32 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
             </View>
           ) : null}
 
+          {taskStatus === "delivered" ? (
+            <TouchableOpacity
+              style={[
+                styles.secondaryActionButton,
+                actionLoading && styles.bottomActionButtonDisabled,
+              ]}
+              activeOpacity={0.85}
+              disabled={actionLoading}
+              onPress={() =>
+                navigation.navigate("DeliveryPhotoCapture", {
+                  shippingTaskId: activeTaskId,
+                  mode: "forced_cancelled",
+                  tradeInFlow: true,
+                  tradeInOrderId: order.tradeInOrderId,
+                })
+              }
+            >
+              <Ionicons
+                name="warning-outline"
+                size={16}
+                color={Colors.error}
+              />
+              <Text style={styles.secondaryActionText}>Forced cancelled</Text>
+            </TouchableOpacity>
+          ) : null}
+
           {taskStatus === "returned" ? (
             <View style={[styles.photoReminder, styles.photoReminderError]}>
               <Ionicons name="alert-circle" size={20} color="#B91C1C" />
@@ -1610,132 +1491,6 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
               resizeMode="contain"
             />
           ) : null}
-        </View>
-      </Modal>
-
-      <Modal visible={processModalVisible} transparent animationType="fade">
-        <View style={styles.modalBackground}>
-          <View style={styles.processModalCard}>
-            <View style={styles.processModalHeader}>
-              <Text style={styles.processModalTitle}>
-                {processMode === "returned"
-                  ? "Process returned trade-in"
-                  : "Process exchange trade-in"}
-              </Text>
-              <TouchableOpacity
-                onPress={() => setProcessModalVisible(false)}
-                disabled={actionLoading}
-              >
-                <Ionicons name="close" size={22} color={Colors.gray600} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.processHint}>
-              Required: productVariantId, note, and evidence photos.
-            </Text>
-
-            {processMode === "exchange" ? (
-              <TextInput
-                value={processNewStaffId}
-                onChangeText={setProcessNewStaffId}
-                editable={!actionLoading}
-                placeholder="newStaffId"
-                placeholderTextColor={Colors.gray400}
-                style={styles.processInput}
-                autoCapitalize="none"
-              />
-            ) : null}
-
-            <TextInput
-              value={processProductVariantId}
-              onChangeText={setProcessProductVariantId}
-              editable={!actionLoading}
-              placeholder="productVariantId"
-              placeholderTextColor={Colors.gray400}
-              style={styles.processInput}
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              value={processReasonNote}
-              onChangeText={setProcessReasonNote}
-              editable={!actionLoading}
-              placeholder={
-                processMode === "returned" ? "damageNote" : "exchangeNote"
-              }
-              placeholderTextColor={Colors.gray400}
-              style={[styles.processInput, styles.processTextArea]}
-              multiline
-            />
-
-            <View style={styles.processEvidenceRow}>
-              <TouchableOpacity
-                style={styles.processEvidenceBtn}
-                activeOpacity={0.85}
-                disabled={actionLoading}
-                onPress={handleCaptureProcessEvidence}
-              >
-                <Ionicons
-                  name="camera-outline"
-                  size={16}
-                  color={Colors.primary700}
-                />
-                <Text style={styles.processEvidenceBtnText}>Add evidence</Text>
-              </TouchableOpacity>
-              <Text style={styles.processEvidenceCount}>
-                {processEvidenceUris.length} photo(s)
-              </Text>
-            </View>
-
-            {processEvidenceUris.length ? (
-              <View style={styles.photoGrid}>
-                {processEvidenceUris.map((uri, idx) => (
-                  <View key={`${uri}-${idx}`} style={styles.photoItem}>
-                    <TouchableOpacity onPress={() => handleOpenImage(uri)}>
-                      <Image
-                        source={{ uri }}
-                        style={styles.photoImage}
-                        resizeMode="cover"
-                      />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.photoRemoveBtn}
-                      onPress={() =>
-                        setProcessEvidenceUris((prev) =>
-                          prev.filter((_, i) => i !== idx),
-                        )
-                      }
-                    >
-                      <Ionicons name="close" size={14} color={Colors.white} />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
-            <TouchableOpacity
-              style={[
-                styles.bottomActionButton,
-                actionLoading && styles.bottomActionButtonDisabled,
-              ]}
-              activeOpacity={0.85}
-              disabled={actionLoading}
-              onPress={handleSubmitPostReturnProcess}
-            >
-              {actionLoading ? (
-                <ActivityIndicator color={Colors.white} />
-              ) : (
-                <>
-                  <Ionicons
-                    name="checkmark-outline"
-                    size={16}
-                    color={Colors.white}
-                  />
-                  <Text style={styles.bottomActionText}>Submit</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
         </View>
       </Modal>
 
