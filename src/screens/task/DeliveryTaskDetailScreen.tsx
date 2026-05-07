@@ -896,11 +896,9 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
             <KeyValueRow
               label="Total value"
               value={
-                displayProducts.totalValue !== undefined
-                  ? formatCurrency(displayProducts.totalValue)
-                  : displayProducts.shouldAvoidShowingOrderTotal
-                    ? "-"
-                    : formatCurrency(task.totalPrice)
+                typeof task.totalPrice === "number"
+                  ? formatCurrency(task.totalPrice)
+                  : "-"
               }
             />
             <KeyValueRow
