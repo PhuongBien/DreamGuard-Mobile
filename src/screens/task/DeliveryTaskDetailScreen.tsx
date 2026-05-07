@@ -395,21 +395,36 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     const normalizeKey = (value: unknown) =>
       String(value ?? "").trim().toLowerCase().replace(/\s+/g, "");
 
-    const extractOrderItemId = (product: unknown): string => {
+    const extractCandidateItemIds = (product: unknown): string[] => {
       const p: any = product as any;
       const candidates = [
+        // Most common keys (delivery order items)
         p?.orderItemId,
         p?.order_item_id,
         p?.orderItemID,
         p?.orderItem?.id,
         p?.orderItem?.orderItemId,
+
+        // Other possible BE variations
+        p?.shippingOrderItemId,
+        p?.shippingOrderItemID,
+        p?.serviceOrderItemId,
+        p?.serviceOrderItemID,
+        p?.orderLineId,
+        p?.orderLineID,
+
+        // Fallback
         p?.id,
       ];
+
+      const normalized: string[] = [];
       for (const candidate of candidates) {
         const id = String(candidate ?? "").trim();
-        if (id) return id;
+        if (!id) continue;
+        if (normalized.includes(id)) continue;
+        normalized.push(id);
       }
-      return "";
+      return normalized;
     };
 
     const orderStatusKey = normalizeKey(task?.serviceOrderStatus);
@@ -426,7 +441,8 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
     // Some BE flows create a new ShippingTask row for the same order after an exchange/return
     // (e.g. ExchangeRequested -> Delivering) but the newer row may no longer include `damagedItems`.
     // To keep "Related products" stable until the end of the delivery flow, we aggregate the
-    // latest known damagedItems by orderId from TaskContext.
+    // latest known damagedItems by orderId from TaskContext. However, when the current task
+    // already has damagedItems, always prefer it (so subtraction works immediately after update).
     const parseIsoMs = (value?: string) => {
       if (!value) return 0;
       const ms = new Date(value).getTime();
@@ -444,15 +460,45 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       );
     };
     const damagedQtyByOrderItemId = new Map<string, number>();
-    const orderIdKey = String(task?.orderId ?? "").trim();
-    const relatedOrderTasks = orderIdKey
-      ? tasks.filter((t) => String(t?.orderId ?? "").trim() === orderIdKey)
+
+    const relatedProducts = Array.isArray((task as any)?.relatedProducts)
+      ? ((task as any).relatedProducts as any[])
       : [];
+    const hasOrderId = !!String(task?.orderId ?? "").trim();
+    const currentDamagedItems = Array.isArray((task as any)?.damagedItems)
+      ? ((task as any).damagedItems as any[])
+      : [];
+
+    // Follow-up exchange/return delivery task:
+    // - task is meant to deliver only the exchanged items (provided in relatedProducts)
+    // - task itself has no damagedItems (those belong to the original task)
+    //
+    // This can happen even when orderId is still present (BE change).
+    const isFollowUpExchangeDeliveryTask =
+      relatedProducts.length > 0 && currentDamagedItems.length === 0;
+
+    // Requirement:
+    // - original order task: show products minus damagedItems
+    // - follow-up task: show relatedProducts from start to end (do NOT subtract using previous task's damagedItems)
+    const renderRelatedProductsAsIs =
+      (!hasOrderId && relatedProducts.length > 0) || isFollowUpExchangeDeliveryTask;
+
+    const orderIdKey = String(task?.orderId ?? "").trim();
+    const relatedOrderTasks =
+      orderIdKey && !renderRelatedProductsAsIs
+        ? tasks.filter((t) => String(t?.orderId ?? "").trim() === orderIdKey)
+        : [];
     const sourceTaskForDamages =
-      relatedOrderTasks
-        .filter((t) => Array.isArray((t as any)?.damagedItems) && ((t as any).damagedItems.length ?? 0) > 0)
-        .sort((a, b) => pickTaskDamageTimestampMs(b) - pickTaskDamageTimestampMs(a))[0] ??
-      task;
+      currentDamagedItems.length > 0
+        ? task
+        : relatedOrderTasks
+            .filter(
+              (t) =>
+                Array.isArray((t as any)?.damagedItems) &&
+                ((t as any).damagedItems.length ?? 0) > 0,
+            )
+            .sort((a, b) => pickTaskDamageTimestampMs(b) - pickTaskDamageTimestampMs(a))[0] ??
+          task;
 
     for (const item of (sourceTaskForDamages as any)?.damagedItems || []) {
       const id = String(item?.orderItemId ?? "").trim();
@@ -461,6 +507,23 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       if (!Number.isFinite(qty) || qty <= 0) continue;
       damagedQtyByOrderItemId.set(id, qty);
     }
+    const hasAnyDamagedItems = damagedQtyByOrderItemId.size > 0;
+
+    const resolveReturnedQtyForProduct = (product: unknown): number => {
+      const ids = extractCandidateItemIds(product);
+      for (const id of ids) {
+        const qty = damagedQtyByOrderItemId.get(id);
+        if (qty !== undefined) return qty;
+      }
+      return Number((product as any)?.damagedQuantity ?? 0) ||
+        Number((product as any)?.returnedQuantity ?? 0) ||
+        Number((product as any)?.returnQuantity ?? 0) ||
+        Number((product as any)?.returnQty ?? 0) ||
+        Number((product as any)?.returnRequestedQuantity ?? 0) ||
+        Number((product as any)?.returnRequested ?? 0) ||
+        Number((product as any)?.return ?? 0) ||
+        0;
+    };
 
     const isReturningRaw =
       rawShippingStatusKey === "returning" ||
@@ -494,7 +557,10 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       (orderStatusKey === "request" ||
         (orderStatusKey.includes("request") && !orderStatusKey.includes("exchange")));
 
-    const products = task?.products || [];
+    // For original orders, prefer hydrated order items (task.products); if missing, fall back to relatedProducts.
+    const baseProducts =
+      (task?.products?.length ?? 0) > 0 ? task?.products || [] : relatedProducts;
+    const products = renderRelatedProductsAsIs ? relatedProducts : baseProducts;
 
     let displayedQtySum = 0;
     let rawQtySum = 0;
@@ -520,33 +586,37 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
             p.exchange ??
             0,
         );
-        const orderItemId = extractOrderItemId(product);
-        const returned = Number(
-          damagedQtyByOrderItemId.get(orderItemId) ??
-            p.damagedQuantity ??
-            p.returnedQuantity ??
-            p.returnQuantity ??
-            p.returnRequestedQuantity ??
-            p.returnRequested ??
-            p.return ??
-            0,
-        );
+        const returned = resolveReturnedQtyForProduct(product);
 
         let displayQty = Number(p.quantity ?? 0);
 
-        // Logic mới:
+        if (!renderRelatedProductsAsIs) {
+        // Logic:
         // - Return / Failed / Returning: displayQty = total - returned
         // - Reschedule có hoàn trả (có damagedItems): displayQty = total - returned
-        // - Exchange requested: displayQty = total - exchange
+        // - Exchange requested: BE now stores the exchanged/returned qty in damagedItems.damagedQuantity
+        //   so prefer total - returned (fallback total - exchange for older payloads)
         // - Request: displayQty = requested
-        if (isRequestOrder) {
-          displayQty = requested;
-        } else if (isExchangeRequestedOrder) {
-          displayQty = total - exchange;
-        } else if (isReturnOrder || isReturningRaw || isRescheduleWithReturnedItems) {
-          displayQty = total - returned;
+          // NOTE: In some deployments, BE may not reliably reflect Exchange/Returning status
+          // on the same task row right after update, but damagedItems is already present.
+          // When we have damagedItems, always subtract based on returned qty (per item),
+          // regardless of status, to make UI stable.
+          if (hasAnyDamagedItems && returned > 0) {
+            displayQty = total - returned;
+          } else if (isRequestOrder) {
+            displayQty = requested;
+          } else if (isExchangeRequestedOrder) {
+          const effectiveReturned = returned > 0 ? returned : exchange;
+          displayQty = total - effectiveReturned;
+          } else if (isReturnOrder || isReturningRaw || isRescheduleWithReturnedItems) {
+            displayQty = total - returned;
+          } else {
+            displayQty = Number(p.quantity ?? 0);
+          }
         } else {
-          displayQty = Number(p.quantity ?? 0);
+          // When backend provides `relatedProducts` (new shipping task after exchange),
+          // render it as-is from start to end of the task.
+          displayQty = Number(p.quantity ?? total ?? 0);
         }
 
         const safeDisplayQty = Number.isFinite(displayQty) ? Math.max(0, displayQty) : 0;
@@ -577,6 +647,7 @@ export default function DeliveryTaskDetailScreen({ route, navigation }: Props) {
       .filter((p) => Number(p.quantity ?? 0) > 0);
 
     const shouldAvoidShowingOrderTotal =
+      renderRelatedProductsAsIs ||
       isReturnOrder ||
       isExchangeRequestedOrder ||
       isRequestOrder ||

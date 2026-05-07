@@ -445,12 +445,23 @@ export default function DeliveryPhotoCaptureScreen({
               <Text style={styles.sectionLabel}>Select damaged products</Text>
               {availableProducts.length ? (
                 availableProducts.map((product) => {
-                  const draft = damagedDraftByItemId[product.id] ?? {
+                  // IMPORTANT:
+                  // Backend expects damagedItems[].orderItemId to match the stable order item id.
+                  // Our ProductItem has `orderItemId?` (preferred) and `id` (may be local fallback).
+                  const orderItemKey = String(
+                    product.orderItemId ?? product.id ?? "",
+                  ).trim();
+                  if (!orderItemKey) return null;
+
+                  const draft = damagedDraftByItemId[orderItemKey] ?? {
                     selected: false,
                     damagedQuantity: 1,
                     itemReason: itemReasonOptions[0],
                   };
-                  const maxQty = Math.max(1, Number(product.quantity ?? 1));
+                  const maxQty = Math.max(
+                    1,
+                    Number(product.totalQuantity ?? product.quantity ?? 1),
+                  );
                   const qty = Math.min(
                     Math.max(1, draft.damagedQuantity || 1),
                     maxQty,
@@ -458,7 +469,7 @@ export default function DeliveryPhotoCaptureScreen({
                   const active = !!draft.selected;
 
                   return (
-                    <View key={product.id} style={styles.damagedRow}>
+                    <View key={orderItemKey} style={styles.damagedRow}>
                       <TouchableOpacity
                         style={styles.damagedSelectBtn}
                         activeOpacity={0.85}
@@ -466,7 +477,7 @@ export default function DeliveryPhotoCaptureScreen({
                         onPress={() =>
                           setDamagedDraftByItemId((prev) => ({
                             ...prev,
-                            [product.id]: {
+                            [orderItemKey]: {
                               ...draft,
                               selected: !draft.selected,
                               damagedQuantity: qty,
@@ -499,7 +510,7 @@ export default function DeliveryPhotoCaptureScreen({
                               onPress={() => {
                                 setDamagedDraftByItemId((prev) => ({
                                   ...prev,
-                                  [product.id]: {
+                                  [orderItemKey]: {
                                     ...draft,
                                     selected: true,
                                     damagedQuantity: Math.max(1, qty - 1),
@@ -527,7 +538,7 @@ export default function DeliveryPhotoCaptureScreen({
                                 );
                                 setDamagedDraftByItemId((prev) => ({
                                   ...prev,
-                                  [product.id]: {
+                                  [orderItemKey]: {
                                     ...draft,
                                     selected: true,
                                     damagedQuantity: clamped,
@@ -543,7 +554,7 @@ export default function DeliveryPhotoCaptureScreen({
                               onPress={() => {
                                 setDamagedDraftByItemId((prev) => ({
                                   ...prev,
-                                  [product.id]: {
+                                  [orderItemKey]: {
                                     ...draft,
                                     selected: true,
                                     damagedQuantity: Math.min(maxQty, qty + 1),

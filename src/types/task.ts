@@ -171,6 +171,7 @@ export interface Task {
   estimatedDuration?: number;
 
   orderId?: string;
+  tradeInOrderId?: string | null;
   /** Primary line item label from API (e.g. order itemName) for list/detail display */
   itemName?: string;
   tags?: string[];
@@ -189,6 +190,12 @@ export interface Task {
 
   customer: CustomerInfo;
   products?: ProductItem[];
+  /**
+   * When BE creates a new ShippingTask row after exchange/return and the task
+   * isn't linked to an orderId, BE can provide items here to display from
+   * start to end of the new task (instead of reusing the old order items).
+   */
+  relatedProducts?: ProductItem[];
   /** ShippingTasks returned/exchange payload */
   damagedItems?: Array<{
     orderItemId: string;

@@ -390,6 +390,52 @@ const normalizeProducts = (taskId: string, raw: Record<string, any>) => {
   });
 };
 
+const normalizeRelatedProducts = (taskId: string, raw: Record<string, any>) => {
+  const sources = Array.isArray(raw.relatedProducts) ? raw.relatedProducts : [];
+  if (!sources.length) return [];
+
+  return sources.map((item: any, index: number) => {
+    const unitPrice = toNumberOrUndefined(
+      item?.unitPrice ?? item?.price ?? item?.totalPrice ?? item?.totalAmount,
+    );
+
+    const totalQuantity =
+      toNumberOrUndefined(
+        item?.totalQuantity ??
+          item?.totalQty ??
+          item?.total ??
+          item?.quantity,
+      ) ?? 1;
+
+    return {
+      id: String(
+        item?.id ??
+          item?.orderItemId ??
+          item?.productVariantId ??
+          item?.variantId ??
+          `${taskId}_related_${index}`,
+      ),
+      orderItemId: String(
+        item?.orderItemId ?? item?.order_item_id ?? item?.orderItemID ?? "",
+      ).trim() || undefined,
+      name: String(
+        item?.name ??
+          item?.productName ??
+          item?.itemName ??
+          item?.title ??
+          "Product",
+      ),
+      type: String(item?.type ?? item?.sku ?? item?.productType ?? "delivery"),
+      quantity: Number(item?.quantity ?? totalQuantity ?? 1) || 1,
+      totalQuantity,
+      description:
+        unitPrice !== undefined
+          ? `${new Intl.NumberFormat("en-US").format(unitPrice)} ₫`
+          : undefined,
+    };
+  });
+};
+
 const buildAddress = (...parts: Array<string | undefined>) =>
   parts
     .map((part) => String(part ?? "").trim())
@@ -610,6 +656,7 @@ const normalizeTask = (input: unknown): Task => {
     photos.find((p) => p.type === "payment")?.url ?? undefined;
   const relatedImageUrls = photos.map((item) => item.url);
   const products = normalizeProducts(taskId, raw);
+  const relatedProducts = normalizeRelatedProducts(taskId, raw);
   const assignedBackendRole = pickAssignedBackendRole(raw);
   const assignedRole =
     normalizeAssignedRole(assignedBackendRole) ?? "delivery_driver";
@@ -682,6 +729,11 @@ const normalizeTask = (input: unknown): Task => {
     orderId:
       String(raw.orderId ?? raw.orderCode ?? raw.soId ?? "").trim() ||
       undefined,
+    tradeInOrderId:
+      toTrimmedString(raw.tradeInOrderId) ??
+      toTrimmedString(raw.tradeInOrderID) ??
+      toTrimmedString(raw.tradeInId) ??
+      null,
     serviceOrderStatus:
       String(
         raw.shippingOrderStatus ??
@@ -717,6 +769,7 @@ const normalizeTask = (input: unknown): Task => {
       note: customerNote,
     },
     products,
+    relatedProducts: relatedProducts.length ? relatedProducts : undefined,
     damagedItems,
     photos,
     notes: normalizeNotes(taskId, raw),
