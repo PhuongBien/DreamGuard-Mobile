@@ -199,6 +199,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const lastFocusSuccessfulRefreshAtRef = useRef(0);
   const pendingEvidenceAttemptsRef = useRef(0);
   const lastPendingEvidenceCheckAtRef = useRef(0);
+  const pendingEvidenceSubmittedKeyRef = useRef<string | null>(null);
 
   // Keep photo UI stable across refresh/hydration (avoid reordering "jumps").
   const photoStableOrderRef = useRef<Map<string, number>>(new Map());
@@ -365,6 +366,12 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
         }
 
         try {
+          const submitKey = `${pendingEvidenceAction}:${taskId}`;
+          if (pendingEvidenceSubmittedKeyRef.current === submitKey) {
+            // Prevent duplicate submissions caused by focus/refetch loops.
+            return;
+          }
+          pendingEvidenceSubmittedKeyRef.current = submitKey;
           setStatusLoading(true);
           if (pendingEvidenceAction === "checkin") {
             await checkInWithEvidence(taskId, newEvidenceUrls);
@@ -381,6 +388,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           setPendingEvidenceTaskId(null);
           setPendingEvidenceBaselineUrls([]);
           pendingEvidenceAttemptsRef.current = 0;
+          pendingEvidenceSubmittedKeyRef.current = null;
         } catch (e: any) {
           Alert.alert("Error", e?.message || "Unable to update status.");
           // Stop the auto-loop on hard failures (e.g. 500).
@@ -388,6 +396,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           setPendingEvidenceTaskId(null);
           setPendingEvidenceBaselineUrls([]);
           pendingEvidenceAttemptsRef.current = 0;
+          pendingEvidenceSubmittedKeyRef.current = null;
         } finally {
           setStatusLoading(false);
         }
@@ -416,6 +425,7 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
     // Reset retry counters when user starts a new evidence flow.
     pendingEvidenceAttemptsRef.current = 0;
     lastPendingEvidenceCheckAtRef.current = 0;
+    pendingEvidenceSubmittedKeyRef.current = null;
   }, [pendingEvidenceAction, taskId]);
 
   useEffect(() => {
@@ -940,7 +950,27 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
 
         const refreshedForComplete =
           (await getTaskById(task.id, { forceRefresh: true })) ?? latestTask;
+        const paymentMethod = String(
+          (refreshedForComplete as any)?.paymentMethod ?? (task as any)?.paymentMethod ?? "",
+        )
+          .trim()
+          .toLowerCase();
+
+        // VnPay: no need to capture payment/COD proof photo. Complete immediately.
+        if (paymentMethod === "vnpay") {
+          await completeTask(task.id, { evidenceUrl: "" });
+          await getTaskById(task.id, { forceRefresh: true });
+          return;
+        }
+
+        // COD (or other methods): require exactly one payment proof photo, then complete once.
         const baseline = getPaymentEvidenceUrlsFromTask(refreshedForComplete);
+        if (baseline.length) {
+          await completeTask(task.id, { evidenceUrl: baseline[0] || "" });
+          await getTaskById(task.id, { forceRefresh: true });
+          return;
+        }
+
         setPendingEvidenceAction("complete");
         setPendingEvidenceTaskId(task.id);
         setPendingEvidenceBaselineUrls(baseline);
