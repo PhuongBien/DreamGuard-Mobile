@@ -981,11 +981,11 @@ export const updateTradeInOrderDelivered = (
 
 export const updateTradeInOrderCompleted = (
   tradeInOrderId: string,
-  notes?: string,
+  paymentEvidenceUrl: string,
 ) =>
   apiFetch<TradeInOrder>(`/api/TradeInOrders/${tradeInOrderId}/completed`, {
     method: "PATCH",
-    body: JSON.stringify(notes ? { notes } : {}),
+    body: JSON.stringify({ paymentEvidenceUrl }),
   });
 
 //  [API: PATCH /api/TradeInOrders/:tradeInOrderId/admin-cancel]

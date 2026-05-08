@@ -47,6 +47,12 @@ const normalizeTradeInOrder = (raw: any): TradeInOrder => {
         : undefined,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
+    paymentEvidenceUrl:
+      typeof raw.paymentEvidenceUrl === "string"
+        ? raw.paymentEvidenceUrl
+        : typeof raw.PaymentEvidenceUrl === "string"
+          ? raw.PaymentEvidenceUrl
+          : undefined,
     payments: Array.isArray(raw.payments)
       ? raw.payments.map((payment: any) => ({
           id: String(payment.id ?? ""),
@@ -56,6 +62,12 @@ const normalizeTradeInOrder = (raw: any): TradeInOrder => {
           amount: Number(payment.amount ?? payment.paidAmount ?? 0),
           paymentMethod: String(payment.paymentMethod ?? payment.method ?? ""),
           createdAt: String(payment.createdAt ?? ""),
+          paymentEvidenceUrl:
+            typeof payment.paymentEvidenceUrl === "string"
+              ? payment.paymentEvidenceUrl
+              : typeof payment.PaymentEvidenceUrl === "string"
+                ? payment.PaymentEvidenceUrl
+                : undefined,
         }))
       : undefined,
     orderItem: raw.orderItem
@@ -146,11 +158,11 @@ export class TradeInOrderService {
 
   static async updateCompleted(
     tradeInOrderId: string,
-    notes?: string,
+    paymentEvidenceUrl: string,
   ): Promise<TradeInOrder | null> {
     const response = await apiUpdateTradeInOrderCompleted(
       tradeInOrderId,
-      notes,
+      paymentEvidenceUrl,
     );
 
     if (!response.success || !response.data) {

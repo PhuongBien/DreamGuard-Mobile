@@ -26,6 +26,7 @@ export interface TradeInPayment {
   amount: number;
   paymentMethod: string;
   createdAt: string;
+  paymentEvidenceUrl?: string;
 }
 
 // ============================================
@@ -95,4 +96,7 @@ export interface TradeInOrder {
   productVariant?: TradeInProductVariant;
 
   tradeInImages?: TradeInImage[];
+
+  /** Payment proof submitted when completing the order */
+  paymentEvidenceUrl?: string;
 }

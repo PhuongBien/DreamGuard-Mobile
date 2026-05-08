@@ -100,9 +100,11 @@ export default function DeliveryPhotoCaptureScreen({
 
   const isReturnedMode = mode === "returned";
   const isForcedCancelledMode = mode === "forced_cancelled";
-  // For trade-in flow, the delivered endpoint expects only `evidenceUrls`,
-  // so we include COD payment proof as an extra evidence photo when needed.
-  const needsCodReceipt = mode === "delivered" && requiresCodPaymentEvidence;
+  // Trade-in flow:
+  // - delivered-for-tradeIn only requires evidenceUrls (NO payment proof here)
+  // - payment proof is submitted later via TradeInOrders/:id/completed
+  const needsCodReceipt =
+    !tradeInFlow && mode === "delivered" && requiresCodPaymentEvidence;
   const needsReason = isReturnedMode || isForcedCancelledMode;
   const usesCustomReason =
     needsReason && reason.trim().toLowerCase() === "other";

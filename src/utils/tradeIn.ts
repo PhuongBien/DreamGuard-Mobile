@@ -26,11 +26,17 @@ export const normalizeTradeInStatus = (status?: string): TradeInUIStatus => {
       return "completed";
 
     case "cancelled":
+    case "canceled":
     case "forcedcancelled":
+    case "admincancelled":
+    case "admin_cancelled":
       return "cancelled";
 
-    default:
+    default: {
+      const compact = (s ?? "").replace(/[\s_-]/g, "");
+      if (compact.includes("cancel")) return "cancelled";
       return "pending";
+    }
   }
 };
 

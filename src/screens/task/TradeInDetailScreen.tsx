@@ -134,7 +134,8 @@ function paymentMethodIndicatesCod(raw?: string): boolean {
 }
 
 function normalizeShippingStatus(status?: string): TaskStatus {
-  switch (status?.toLowerCase()) {
+  const s = (status ?? "").trim().toLowerCase().replace(/\s+/g, "");
+  switch (s) {
     case "pending":
       return "pending";
     case "delivering":
@@ -148,8 +149,14 @@ function normalizeShippingStatus(status?: string): TaskStatus {
     case "failed":
       return "returned";
     case "exchangerequested":
+    case "exchange_requested":
       return "exchange_requested";
+    case "cancelled":
+    case "canceled":
+    case "forcedcancelled":
+      return "cancelled";
     default:
+      if (s.includes("cancel")) return "cancelled";
       return "pending";
   }
 }
@@ -184,6 +191,9 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
   const [actionLoading, setActionLoading] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const [evidenceImageUri, setEvidenceImageUri] = useState<string | null>(null);
+  const [completePaymentEvidenceUri, setCompletePaymentEvidenceUri] = useState<
+    string | null
+  >(null);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [currentImage, setCurrentImage] = useState<string | null>(null);
 
@@ -271,7 +281,7 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
       tl.deliveredAt
         ? {
             key: "delivered",
-            label: "Delivered successfully",
+            label: "Arrived at customer (evidence submitted)",
             value: tl.deliveredAt,
           }
         : null,
@@ -289,12 +299,19 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
 
   const deliveryImageUrls = useMemo(() => {
     if (!shippingTask) return [];
+    const paymentEvidenceUrls = [
+      ...(order?.payments || [])
+        .map((p) => (p as any)?.paymentEvidenceUrl)
+        .filter(Boolean),
+      (order as any)?.paymentEvidenceUrl,
+    ].filter(Boolean) as string[];
     const merged = [
       ...(shippingTask.relatedImageUrls || []),
       ...(shippingTask.photos || []).map((p) => p.url),
+      ...paymentEvidenceUrls,
     ];
     return Array.from(new Set(merged.filter(Boolean)));
-  }, [shippingTask]);
+  }, [shippingTask, order?.payments, order?.paymentEvidenceUrl]);
 
   const sortedPayments = useMemo(() => {
     if (!order?.payments?.length) return [];
@@ -488,6 +505,63 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
     scheduleTime,
   ]);
 
+  const handleCapturePaymentEvidenceForComplete =
+    useCallback(async () => {
+      try {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== "granted") {
+          Alert.alert(
+            "Missing camera permission",
+            "Camera permission is required to capture payment proof.",
+          );
+          return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.8,
+        });
+        if (!result.canceled && result.assets?.length > 0) {
+          setCompletePaymentEvidenceUri(result.assets[0].uri);
+        }
+      } catch (err: any) {
+        Alert.alert("Camera error", err?.message);
+      }
+    }, []);
+
+  const handleCompleteTradeInOrder = async () => {
+    if (!order?.tradeInOrderId) return;
+    if (!completePaymentEvidenceUri) {
+      Alert.alert(
+        "Missing payment proof",
+        "Please capture a photo of payment evidence before completing the trade-in order.",
+      );
+      return;
+    }
+    try {
+      setActionLoading(true);
+      const paymentEvidenceUrl = await uploadImageToCloudinary(
+        completePaymentEvidenceUri,
+      );
+      if (!paymentEvidenceUrl) throw new Error("Upload failed");
+      const updated = await TradeInOrderService.updateCompleted(
+        order.tradeInOrderId,
+        paymentEvidenceUrl,
+      );
+      if (!updated) {
+        throw new Error("Could not complete the trade-in order.");
+      }
+      setOrder(updated);
+      setCompletePaymentEvidenceUri(null);
+      await loadAll();
+      Alert.alert("Success", "Trade-in order marked as completed.");
+    } catch (err: any) {
+      Alert.alert("Error", err?.message ?? "Failed to complete order");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleCaptureEvidence = useCallback(async () => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -585,7 +659,12 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
     );
   }
 
-  const uiStatus = normalizeTradeInStatus(order.status);
+  const orderStatusNormalized = normalizeTradeInStatus(order.status);
+  const orderCancelledEffective =
+    orderStatusNormalized === "cancelled" || taskStatus === "cancelled";
+  const uiStatus: TradeInUIStatus = orderCancelledEffective
+    ? "cancelled"
+    : orderStatusNormalized;
   const orderColors =
     ORDER_STATUS_COLORS[uiStatus] ?? ORDER_STATUS_COLORS.pending;
   const deliveryColors =
@@ -1259,13 +1338,22 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
         ) : null}
       </ScrollView>
 
-      {activeTaskId ? (
+      {activeTaskId && orderCancelledEffective ? null : activeTaskId ? (
         <View
           style={[
             styles.bottomActionWrapper,
             { paddingBottom: 10 + insets.bottom },
           ]}
         >
+          {orderStatusNormalized === "completed" ? (
+            <View style={styles.photoReminder}>
+              <Ionicons name="checkmark-circle" size={20} color="#15803D" />
+              <Text style={styles.photoReminderText}>
+                Trade-in order completed. Payment evidence was submitted.
+              </Text>
+            </View>
+          ) : (
+            <>
           {taskStatus === "pending" && needsReceiveForDelivery ? (
             <TouchableOpacity
               style={[
@@ -1410,8 +1498,6 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
                     mode: "delivered",
                     tradeInFlow: true,
                     tradeInOrderId: order.tradeInOrderId,
-                    requiresCodPaymentEvidence:
-                      requiresCodPaymentEvidence,
                   })
                 }
               >
@@ -1421,45 +1507,96 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
                   color={Colors.white}
                 />
                 <Text style={styles.bottomActionText}>
-                  Delivery successful
+                  Delivered
                 </Text>
               </TouchableOpacity>
             </View>
           ) : null}
 
           {taskStatus === "delivered" ? (
-            <View style={styles.photoReminder}>
-              <Ionicons name="checkmark-circle" size={20} color="#0284C7" />
-              <Text style={styles.photoReminderText}>
-                Task delivered successfully. Evidence was submitted.
-              </Text>
-            </View>
-          ) : null}
-
-          {taskStatus === "delivered" ? (
-            <TouchableOpacity
-              style={[
-                styles.secondaryActionButton,
-                actionLoading && styles.bottomActionButtonDisabled,
-              ]}
-              activeOpacity={0.85}
-              disabled={actionLoading}
-              onPress={() =>
-                navigation.navigate("DeliveryPhotoCapture", {
-                  shippingTaskId: activeTaskId,
-                  mode: "forced_cancelled",
-                  tradeInFlow: true,
-                  tradeInOrderId: order.tradeInOrderId,
-                })
-              }
-            >
-              <Ionicons
-                name="warning-outline"
-                size={16}
-                color={Colors.error}
-              />
-              <Text style={styles.secondaryActionText}>Forced cancelled</Text>
-            </TouchableOpacity>
+            <>
+              <View style={styles.photoReminder}>
+                <Ionicons name="checkmark-circle" size={20} color="#0284C7" />
+                <Text style={styles.photoReminderText}>
+                  Arrived at customer. Evidence was submitted.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.secondaryActionButton,
+                  { marginTop: 12 },
+                  actionLoading && styles.bottomActionButtonDisabled,
+                ]}
+                activeOpacity={0.85}
+                disabled={actionLoading}
+                onPress={handleCapturePaymentEvidenceForComplete}
+              >
+                <Ionicons
+                  name="camera-outline"
+                  size={16}
+                  color={Colors.primary500}
+                />
+                <Text style={styles.secondaryActionText}>
+                  {completePaymentEvidenceUri
+                    ? "Replace payment proof"
+                    : "Capture payment proof"}
+                </Text>
+              </TouchableOpacity>
+              <View style={[styles.dualActionWrap, { marginTop: 12 }]}>
+                <TouchableOpacity
+                  style={[
+                    styles.bottomActionButton,
+                    styles.dualActionButton,
+                    (!completePaymentEvidenceUri || actionLoading) &&
+                      styles.bottomActionButtonDisabled,
+                  ]}
+                  activeOpacity={0.85}
+                  disabled={actionLoading || !completePaymentEvidenceUri}
+                  onPress={handleCompleteTradeInOrder}
+                >
+                  {actionLoading ? (
+                    <ActivityIndicator color={Colors.white} />
+                  ) : (
+                    <>
+                      <Ionicons
+                        name="checkmark-done-outline"
+                        size={16}
+                        color={Colors.white}
+                      />
+                      <Text style={styles.bottomActionText}>
+                        Complete order
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.secondaryActionButton,
+                    styles.dualActionButton,
+                    actionLoading && styles.bottomActionButtonDisabled,
+                  ]}
+                  activeOpacity={0.85}
+                  disabled={actionLoading}
+                  onPress={() =>
+                    navigation.navigate("DeliveryPhotoCapture", {
+                      shippingTaskId: activeTaskId,
+                      mode: "forced_cancelled",
+                      tradeInFlow: true,
+                      tradeInOrderId: order.tradeInOrderId,
+                    })
+                  }
+                >
+                  <Ionicons
+                    name="warning-outline"
+                    size={16}
+                    color={Colors.error}
+                  />
+                  <Text style={styles.secondaryActionText}>
+                    Forced cancelled
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </>
           ) : null}
 
           {taskStatus === "returned" ? (
@@ -1472,6 +1609,8 @@ export default function TradeInDetailScreen({ route, navigation }: Props) {
               </Text>
             </View>
           ) : null}
+            </>
+          )}
         </View>
       ) : null}
 
